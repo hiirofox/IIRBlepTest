@@ -6,13 +6,21 @@
 
 #include "raylib/src/raylib.h"
 #include "dsp/optimizer.h"
+#include <complex>
 
 struct PoleModal
 {
 	const float Ts = 1.0f / 48000.0f;
+
 	float a1 = 0, a2 = 0;
 	float z1 = 0, z2 = 0;
+
 	float pre = 0, pim = 0, rre = 0, rim = 0;
+
+	std::complex<float> pole = { 0, 0 };
+	std::complex<float> residue = { 0, 0 };
+	std::complex<float> step1 = { 1, 0 };
+
 	inline float ProcessSample()
 	{
 		float y = z1;
@@ -20,6 +28,7 @@ struct PoleModal
 		z2 = -a2 * y;
 		return y;
 	}
+
 	void CalcPole(float pre, float pim, float rre, float rim)
 	{
 		this->pre = pre;
@@ -31,26 +40,26 @@ struct PoleModal
 		float O = pim * Ts;
 		a1 = -2.0f * R * cosf(O);
 		a2 = R * R;
+
+		pole = std::complex<float>(pre, pim);
+		residue = std::complex<float>(rre, rim);
+		step1 = std::exp(pole * Ts);
 	}
+
 	void InjectImpulse(float tau, float v)
 	{
 		if (tau < 0.0f) tau = 0.0f;
 		if (tau >= 1.0f) tau = 1.0f;
-		float t1 = (1.0f - tau) * Ts;
-		float t2 = (2.0f - tau) * Ts;
-		float e1 = expf(pre * t1);
-		float e2 = expf(pre * t2);
-		float c1 = cosf(pim * t1);
-		float s1 = sinf(pim * t1);
-		float c2 = cosf(pim * t2);
-		float s2 = sinf(pim * t2);
-		float g1 = 2.0f * v * e1 * (rre * c1 - rim * s1);
-		float g2 = 2.0f * v * e2 * (rre * c2 - rim * s2);
-		float dz1 = g1;
-		float dz2 = g2 + a1 * g1;
-		z1 += dz1;
-		z2 += dz2;
+		float dt1 = (1.0f - tau) * Ts;
+		std::complex<float> shift = std::exp(pole * dt1);
+		std::complex<float> A1 = v * residue * shift;
+		std::complex<float> A2 = A1 * step1;
+		float g1 = 2.0f * A1.real();
+		float g2 = 2.0f * A2.real();
+		z1 += g1;
+		z2 += g2 + a1 * g1;
 	}
+
 	void Reset()
 	{
 		z1 = 0;
@@ -114,7 +123,7 @@ void fft(float re[], float im[], int N, int inv)
 class SystemModal
 {
 public:
-	constexpr static int NumOrders = 4;
+	constexpr static int NumOrders = 6;
 private:
 	PoleModal poles[NumOrders];
 	std::vector<float> params;
@@ -169,189 +178,46 @@ private:
 		return ((float)rand() / (float)RAND_MAX) * ((float)rand() / (float)RAND_MAX) * (rand() % 2 ? 1 : -1);
 	}
 
-	constexpr static int TestLen = 128;
-	float testre1[TestLen];
-	float testim1[TestLen];
-	float testre2[TestLen];
-	float testim2[TestLen];
+	constexpr static int TestLen = 32;
+	constexpr static int TestTauN = 8;
+	float testre[TestLen];
+	float testim[TestLen];
 	float lastloss = -1;
 	std::vector<float> params2;
 	float Error(std::vector<float>& params)
 	{
-		// ---------- 可调参数 ----------
-		constexpr float Fs = 48000.0f;
-		constexpr float M_PI = 3.14159265358979323846f;
-
-		// 训练时频谱长度要远大于原来的 128，否则你看到的大量东西只是截断/窗造成的
-		constexpr int FFTLen = 32;
-
-		// 多个 tau 一起训练，覆盖 [0, 1)
-		constexpr int TauCount = 17;
-
-		// 目标低通边界（按 Nyquist 归一化）
-		// pass <= 0.45*Nyquist, stop >= 0.49*Nyquist
-		constexpr float PassEdge = 0.45f;
-		constexpr float StopEdge = 0.49f;
-
-		// 各项 loss 权重
-		constexpr float WPassFlat = 1.0f;   // 平均频响通带平坦
-		constexpr float WStop = 2.0f;   // 阻带抑制
-		constexpr float WConsistency = 40.0f;   // 不同 tau 去相位后的复频响一致
-		constexpr float WGain = 2.0f;   // 通带平均增益锚定在 1
-		constexpr float WTail = 0.02f;  // 尾部能量，减轻“靠超慢极点拖尾骗频响”
-
-		auto sqr = [](float x) -> float { return x * x; };
-		auto clamp01 = [](float x) -> float
-			{
-				if (x < 0.0f) return 0.0f;
-				if (x > 1.0f) return 1.0f;
-				return x;
-			};
-		auto smoothstep = [&](float a, float b, float x) -> float
-			{
-				float t = clamp01((x - a) / (b - a));
-				return t * t * (3.0f - 2.0f * t);
-			};
-
-		// 先做参数规整，再算极点
-		params2 = params;
-		Regularization(params2);
-		modal1.CalcPoles(params2);
-
-		// 保存每个 tau 的“去掉分数延时后的复频响”
-		std::vector<float> meanRe(FFTLen / 2 + 1, 0.0f);
-		std::vector<float> meanIm(FFTLen / 2 + 1, 0.0f);
-
-		std::vector<float> allRe(TauCount * (FFTLen / 2 + 1), 0.0f);
-		std::vector<float> allIm(TauCount * (FFTLen / 2 + 1), 0.0f);
-
-		float tailLoss = 0.0f;
-
-		for (int kt = 0; kt < TauCount; ++kt)
+		float errv2 = 0;
+		for (int i = 0; i < TestTauN; ++i)
 		{
-			float tau = (float)kt / (float)TauCount; // [0,1)
-
-			std::vector<float> re(FFTLen, 0.0f);
-			std::vector<float> im(FFTLen, 0.0f);
-
 			modal1.Reset();
-			modal1.InjectImpulse(tau, 1.0f);
-
-			for (int n = 0; n < FFTLen; ++n)
+			params2 = params;
+			Regularization(params2);
+			modal1.CalcPoles(params2);
+			float tau = (float)i / (float)TestTauN;
+			modal1.InjectImpulse(tau, 1.0);
+			for (int i = 0; i < TestLen; ++i)
 			{
-				float y = modal1.ProcessSample();
-				re[n] = y;
-				im[n] = 0.0f;
-
-				// 惩罚尾部能量，避免用极慢衰减模态 + 截断 FFT 伪造频响
-				if (n >= FFTLen / 4)
-					tailLoss += y * y;
+				float x = (float)i / (float)TestLen;
+				float w = (1.0 - x * x);
+				float window = w * w;
+				testre[i] = modal1.ProcessSample() * window;
+				testim[i] = 0;
 			}
-
-			fft(re.data(), im.data(), FFTLen, 1);
-
-			// 你的离散输出从“下一个采样点”开始，
-			// 所以不同 tau 之间应只差 delay d = 1 - tau 的线性相位
-			float d = 1.0f - tau;
-
-			for (int k = 0; k <= FFTLen / 2; ++k)
+			fft(testre, testim, TestLen, 1);
+			float errv = 0;
+			for (int i = 0; i < TestLen / 2; ++i)
 			{
-				float w = 2.0f * PI * (float)k / (float)FFTLen;
-				float c = cosf(w * d);
-				float s = sinf(w * d);
-
-				// 去掉 e^{-jwd}，即乘 e^{+jwd}
-				float rr = re[k] * c - im[k] * s;
-				float ii = re[k] * s + im[k] * c;
-
-				allRe[kt * (FFTLen / 2 + 1) + k] = rr;
-				allIm[kt * (FFTLen / 2 + 1) + k] = ii;
-
-				meanRe[k] += rr;
-				meanIm[k] += ii;
+				float x = (float)i / (float)(TestLen / 2 - 1);
+				float target = x > 0.95 ? 0.05 : 1.0;
+				float mag1 = sqrtf(testre[i] * testre[i] + testim[i] * testim[i]);
+				float e1 = fabsf(logf(mag1) - logf(target));
+				errv += e1 * e1;
 			}
+			errv /= TestLen;
+			errv2 += errv;
 		}
-
-		for (int k = 0; k <= FFTLen / 2; ++k)
-		{
-			meanRe[k] /= (float)TauCount;
-			meanIm[k] /= (float)TauCount;
-		}
-
-		float passFlatLoss = 0.0f;
-		float stopLoss = 0.0f;
-		float consistencyLoss = 0.0f;
-		float gainLoss = 0.0f;
-
-		int passCount = 0;
-		int stopCount = 0;
-
-		for (int k = 0; k <= FFTLen / 2; ++k)
-		{
-			float fn = (float)k / (float)(FFTLen / 2); // 0..1 对应 0..Nyquist
-
-			// 平滑低通模板，而不是硬台阶
-			float stopMix = smoothstep(PassEdge, StopEdge, fn); // 0=pass, 1=stop
-			float targetMag = 1.0f - stopMix;
-
-			float mr = meanRe[k];
-			float mi = meanIm[k];
-			float mm = sqrtf(mr * mr + mi * mi + 1.0e-30f);
-
-			if (fn <= PassEdge)
-			{
-				// 通带平坦且接近 1
-				passFlatLoss += sqr(mm - 1.0f);
-				gainLoss += sqr(mm - 1.0f);
-				++passCount;
-			}
-			else if (fn >= StopEdge)
-			{
-				// 阻带能量要小
-				stopLoss += mm * mm;
-				++stopCount;
-			}
-			else
-			{
-				// 过渡带用软目标
-				passFlatLoss += 0.25f * sqr(mm - targetMag);
-			}
-
-			// 不同 tau 去掉线性相位后，复频响应一致
-			for (int kt = 0; kt < TauCount; ++kt)
-			{
-				float rr = allRe[kt * (FFTLen / 2 + 1) + k];
-				float ii = allIm[kt * (FFTLen / 2 + 1) + k];
-
-				float dr = rr - mr;
-				float di = ii - mi;
-
-				// 通带里更强调一致性；阻带里稍微弱一点
-				float w = (fn <= PassEdge) ? 1.0f : 0.2f;
-				consistencyLoss += w * (dr * dr + di * di);
-			}
-		}
-
-		if (passCount > 0)
-		{
-			passFlatLoss /= (float)passCount;
-			gainLoss /= (float)passCount;
-		}
-		if (stopCount > 0)
-			stopLoss /= (float)stopCount;
-
-		consistencyLoss /= (float)(TauCount * (FFTLen / 2 + 1));
-		tailLoss /= (float)(TauCount * FFTLen);
-
-		float errv =
-			WPassFlat * passFlatLoss +
-			WStop * stopLoss +
-			WConsistency * consistencyLoss +
-			WGain * gainLoss +
-			WTail * tailLoss;
-
-		lastloss = errv;
-		return errv;
+		lastloss = errv2;
+		return errv2;
 	}
 public:
 	ModalLPFOptimizer()
@@ -365,12 +231,12 @@ public:
 		}
 		modal1.CalcPoles(initParams);
 		modal2.CalcPoles(initParams);
-		optimizer.SetupOptimizer(NumOrders * 4, initParams, 1);
+		optimizer.SetupOptimizer(NumOrders * 4, initParams,0.05);
 		optimizer.SetErrorFunc([this](std::vector<float>& params) { return Error(params); });
 	}
 	float RunOptimizer()
 	{
-		optimizer.RunOptimizer(10);
+		optimizer.RunOptimizer(100);
 		return lastloss;
 	}
 	void GetNowParams(std::vector<float>& params)
@@ -379,55 +245,41 @@ public:
 	}
 
 
-
+	float sigmoid(float x)
+	{
+		if (x >= 0.0f)
+		{
+			float e = expf(-x);
+			return 1.0f / (1.0f + e);
+		}
+		else
+		{
+			float e = expf(x);
+			return e / (1.0f + e);
+		}
+	}
+	float softplus(float x)
+	{
+		if (x > 20.0f) return x;
+		if (x < -20.0f) return expf(x);
+		return logf(1.0f + expf(x));
+	}
 	void Regularization(std::vector<float>& input)
 	{
 		const float Fs = 48000.0f;
 		const float M_PI = 3.14159265358979323846f;
 		const float NyquistRad = M_PI * Fs; // 因为 O = pim * Ts，所以 pim 必须是 rad/s
-
-		auto sigmoid = [](float x) -> float
-			{
-				if (x >= 0.0f)
-				{
-					float e = expf(-x);
-					return 1.0f / (1.0f + e);
-				}
-				else
-				{
-					float e = expf(x);
-					return e / (1.0f + e);
-				}
-			};
-
-		auto softplus = [](float x) -> float
-			{
-				if (x > 20.0f) return x;
-				if (x < -20.0f) return expf(x);
-				return logf(1.0f + expf(x));
-			};
-
 		for (int i = 0; i < NumOrders; i++)
 		{
 			float rawSigma = input[i * 4 + 0];
 			float rawOmega = input[i * 4 + 1];
 			float rawRre = input[i * 4 + 2];
 			float rawRim = input[i * 4 + 3];
-
-			// 1) 实部必须 < 0，且不要太接近 0，否则靠长拖尾 + 截断频谱作弊
-			//    这里下界给一个最小衰减，再留足动态范围
-			float sigma = -(80.0f + 12000.0f * softplus(rawSigma));
-
-			// 2) 虚部映射到 (0, 0.98*Nyquist) 的 rad/s
-			//    你原来 *24000 的量纲不对；CalcPole 里 O = pim*Ts，所以 pim 应该是 rad/s
-			float omega = 0.98f * NyquistRad * sigmoid(rawOmega);
-
-			// 3) 输出模态系数做有界化，避免数值爆炸
-			//    总幅度按阶数缩放，让 Adam 更容易收敛
+			float sigma = -(10.0f + 12000.0f * softplus(rawSigma));
+			float omega = 0.45f * NyquistRad * sigmoid(rawOmega);
 			float gainScale = 2.5f / (float)NumOrders;
 			float rre = gainScale * tanhf(rawRre);
 			float rim = gainScale * tanhf(rawRim);
-
 			input[i * 4 + 0] = sigma;
 			input[i * 4 + 1] = omega;
 			input[i * 4 + 2] = rre;
@@ -464,54 +316,47 @@ Color HSVtoRGB(float h, float s, float v)
 		255
 	};
 }
+
 int main()
 {
-	constexpr int ScreenW = 1600;
-	constexpr int ScreenH = 900;
-	constexpr int FFTLen = 8192;
-	constexpr float SampleRate = 48000.0;
+	constexpr int ScreenW = 1800;
+	constexpr int ScreenH = 960;
+	constexpr int FFTLenResp = 8192;
+	constexpr float SampleRate = 48000.0f;
 
-	InitWindow(ScreenW, ScreenH, "Modal Optimizer Frequency Response");
+	// ---- Sweep / STFT 参数 ----
+	constexpr float SweepDurSec = 3.0f;
+	constexpr int SweepSamples = (int)(SweepDurSec * SampleRate);
+	constexpr float SweepF0 = 2400.0f;
+	constexpr float SweepF1 = 24000.0f;
+
+	constexpr int STFTSize = 1024;
+	int hopSize = 512;                 // 可调
+	constexpr float DbMin = -16.0f;
+	constexpr float DbMax = 16.0f;
+
+	InitWindow(ScreenW, ScreenH, "IIR Modal BLIT Optimizer + Sweep Spectrogram");
 	SetTargetFPS(60);
 
 	ModalLPFOptimizer opt;
 
-
-	auto BuildSpectrumDb = [&](SystemModal& modal, std::vector<float>& outDb, float tau)
+	auto Clamp = [](float x, float a, float b) -> float
 		{
-			static float re[FFTLen];
-			static float im[FFTLen];
+			if (x < a) return a;
+			if (x > b) return b;
+			return x;
+		};
 
-			modal.Reset();
-			modal.InjectImpulse(tau, 1.0f);/////!
-
-			for (int i = 0; i < FFTLen; ++i)
-			{
-				float x = (float)i / (float)(FFTLen - 1);
-				float w = (1.0f - x * x);
-				float window = w * w;
-				re[i] = modal.ProcessSample() * window;
-				im[i] = 0.0f;
-			}
-
-			fft(re, im, FFTLen, 1);
-
-			outDb.resize(FFTLen / 2 + 1);
-			for (int i = 0; i <= FFTLen / 2; ++i)
-			{
-				float mag = sqrtf(re[i] * re[i] + im[i] * im[i]);
-				if (mag < 1.0e-20f) mag = 1.0e-20f;
-				outDb[i] = 20.0f * log10f(mag);
-			}
+	auto Lerp = [](float a, float b, float t) -> float
+		{
+			return a + (b - a) * t;
 		};
 
 	auto FreqToX = [&](float f, const Rectangle& rc) -> float
 		{
 			float fmin = 20.0f;
 			float fmax = 24000.0f;
-			if (f < fmin) f = fmin;
-			if (f > fmax) f = fmax;
-
+			f = Clamp(f, fmin, fmax);
 			float t = (log10f(f) - log10f(fmin)) / (log10f(fmax) - log10f(fmin));
 			return rc.x + t * rc.width;
 		};
@@ -520,41 +365,56 @@ int main()
 		{
 			float dbMin = -30.0f;
 			float dbMax = 30.0f;
-			if (db < dbMin) db = dbMin;
-			if (db > dbMax) db = dbMax;
-
+			db = Clamp(db, dbMin, dbMax);
 			float t = (db - dbMin) / (dbMax - dbMin);
 			return rc.y + rc.height * (1.0f - t);
 		};
 
-	auto DrawSpectrum = [&](const std::vector<float>& db, const Rectangle& rc, Color color)
+	auto LogFreqToY = [&](float f, const Rectangle& rc) -> float
 		{
-			if (db.size() < 2) return;
+			float fmin = 20.0f;
+			float fmax = 24000.0f;
+			f = Clamp(f, fmin, fmax);
+			float t = (log10f(f) - log10f(fmin)) / (log10f(fmax) - log10f(fmin));
+			return rc.y + rc.height * (1.0f - t);
+		};
 
-			const int halfN = (int)db.size() - 1;
-			for (int px = 0; px < (int)rc.width - 1; ++px)
+	auto ColorMapDb = [&](float db) -> Color
+		{
+			float t = (db - DbMin) / (DbMax - DbMin);
+			t = Clamp(t, 0.0f, 1.0f);
+
+			// 深色 -> 蓝 -> 青 -> 黄 -> 白
+			float h, s, v;
+			if (t < 0.25f)
 			{
-				float t0 = (float)px / rc.width;
-				float t1 = (float)(px + 1) / rc.width;
-
-				float f0 = powf(10.0f, log10f(20.0f) + t0 * (log10f(24000.0f) - log10f(20.0f)));
-				float f1 = powf(10.0f, log10f(20.0f) + t1 * (log10f(24000.0f) - log10f(20.0f)));
-
-				float bin0 = f0 * (float)FFTLen / SampleRate;
-				float bin1 = f1 * (float)FFTLen / SampleRate;
-
-				int i0 = (int)bin0;
-				int i1 = (int)bin1;
-
-				if (i0 < 0) i0 = 0;
-				if (i0 > halfN) i0 = halfN;
-				if (i1 < 0) i1 = 0;
-				if (i1 > halfN) i1 = halfN;
-
-				float y0 = DbToY(db[i0], rc);
-				float y1 = DbToY(db[i1], rc);
-				DrawLineV({ rc.x + (float)px, y0 }, { rc.x + (float)px + 1.0f, y1 }, color);
+				float u = t / 0.25f;
+				h = Lerp(0.72f, 0.62f, u);
+				s = 1.0f;
+				v = Lerp(0.08f, 0.45f, u);
 			}
+			else if (t < 0.55f)
+			{
+				float u = (t - 0.25f) / 0.30f;
+				h = Lerp(0.62f, 0.50f, u);
+				s = 1.0f;
+				v = Lerp(0.45f, 0.95f, u);
+			}
+			else if (t < 0.82f)
+			{
+				float u = (t - 0.55f) / 0.27f;
+				h = Lerp(0.50f, 0.15f, u);
+				s = Lerp(1.0f, 0.85f, u);
+				v = 1.0f;
+			}
+			else
+			{
+				float u = (t - 0.82f) / 0.18f;
+				h = Lerp(0.15f, 0.0f, u);
+				s = Lerp(0.85f, 0.0f, u);
+				v = 1.0f;
+			}
+			return HSVtoRGB(h, s, v);
 		};
 
 	auto DrawGrid = [&](const Rectangle& rc)
@@ -572,10 +432,8 @@ int main()
 				DrawLine((int)x, (int)rc.y, (int)x, (int)(rc.y + rc.height), Fade(GRAY, 0.35f));
 
 				char txt[32];
-				if (f >= 1000.0f)
-					sprintf(txt, "%.0fk", f / 1000.0f);
-				else
-					sprintf(txt, "%.0f", f);
+				if (f >= 1000.0f) sprintf(txt, "%.0fk", f / 1000.0f);
+				else sprintf(txt, "%.0f", f);
 
 				DrawText(txt, (int)x - 12, (int)(rc.y + rc.height + 8), 18, LIGHTGRAY);
 			}
@@ -592,51 +450,310 @@ int main()
 			}
 		};
 
+	auto DrawSpecGrid = [&](const Rectangle& rc, float durationSec)
+		{
+			DrawRectangleLinesEx(rc, 1.0f, GRAY);
+
+			// 时间刻度：始终铺满整个框
+			for (int i = 0; i <= 6; ++i)
+			{
+				float t = durationSec * (float)i / 6.0f;
+				float x = rc.x + rc.width * ((float)i / 6.0f);
+				DrawLine((int)x, (int)rc.y, (int)x, (int)(rc.y + rc.height), Fade(GRAY, 0.25f));
+
+				char txt[32];
+				sprintf(txt, "%.2fs", t);
+				DrawText(txt, (int)x - 18, (int)(rc.y + rc.height + 8), 18, LIGHTGRAY);
+			}
+
+			// 线性频率刻度
+			const float freqMarks[] = { 0, 4000, 8000, 12000, 16000, 20000, 24000 };
+			for (float f : freqMarks)
+			{
+				float y = rc.y + rc.height * (1.0f - f / 24000.0f);
+				DrawLine((int)rc.x, (int)y, (int)(rc.x + rc.width), (int)y, Fade(GRAY, 0.25f));
+
+				char txt[32];
+				if (f >= 1000.0f) sprintf(txt, "%.0fk", f / 1000.0f);
+				else sprintf(txt, "%.0f", f);
+				DrawText(txt, (int)rc.x - 48, (int)y - 10, 18, LIGHTGRAY);
+			}
+		};
+
+	auto BuildSpectrumDb = [&](SystemModal& modal, std::vector<float>& outDb, float tau)
+		{
+			static float re[FFTLenResp];
+			static float im[FFTLenResp];
+
+			modal.Reset();
+			modal.InjectImpulse(tau, 1.0f);
+
+			for (int i = 0; i < FFTLenResp; ++i)
+			{
+				re[i] = modal.ProcessSample();
+				im[i] = 0.0f;
+			}
+
+			fft(re, im, FFTLenResp, 1);
+
+			outDb.resize(FFTLenResp / 2 + 1);
+			for (int i = 0; i <= FFTLenResp / 2; ++i)
+			{
+				float mag = sqrtf(re[i] * re[i] + im[i] * im[i]);
+				if (mag < 1.0e-20f) mag = 1.0e-20f;
+				outDb[i] = 20.0f * log10f(mag);
+			}
+		};
+
+	auto DrawSpectrum = [&](const std::vector<float>& db, const Rectangle& rc, Color color)
+		{
+			if (db.size() < 2) return;
+
+			const int halfN = (int)db.size() - 1;
+			for (int px = 0; px < (int)rc.width - 1; ++px)
+			{
+				float t0 = (float)px / rc.width;
+				float t1 = (float)(px + 1) / rc.width;
+
+				float f0 = powf(10.0f, log10f(20.0f) + t0 * (log10f(24000.0f) - log10f(20.0f)));
+				float f1 = powf(10.0f, log10f(20.0f) + t1 * (log10f(24000.0f) - log10f(20.0f)));
+
+				float bin0 = f0 * (float)FFTLenResp / SampleRate;
+				float bin1 = f1 * (float)FFTLenResp / SampleRate;
+
+				int i0 = (int)bin0;
+				int i1 = (int)bin1;
+
+				i0 = std::max(0, std::min(i0, halfN));
+				i1 = std::max(0, std::min(i1, halfN));
+
+				float y0 = DbToY(db[i0], rc);
+				float y1 = DbToY(db[i1], rc);
+				DrawLineV({ rc.x + (float)px, y0 }, { rc.x + (float)px + 1.0f, y1 }, color);
+			}
+		};
+	auto BuildSweepSignal = [&](SystemModal& modal, std::vector<float>& out)
+		{
+			out.assign(SweepSamples, 0.0f);
+			modal.Reset();
+
+			float phase = 0.0f;
+
+			for (int n = 0; n < SweepSamples; ++n)
+			{
+				float u = (float)n / (float)(SweepSamples - 1);
+
+				// 指数扫频：100 Hz -> 24000 Hz
+				float freq = SweepF0 * powf(SweepF1 / SweepF0, u);
+				float incr = freq / SampleRate;
+
+				float prevPhase = phase;
+				phase += incr;
+
+				// 一个 sample 内可能跨越多次（高频端接近 Nyquist 时仍然安全）
+				while (phase >= 1.0f)
+				{
+					float frac = (1.0f - prevPhase) / incr;   // crossing position in this sample
+					float tau = Clamp(frac, 0.0f, 0.999999f);
+					modal.InjectImpulse(tau, 1.0f);
+
+					phase -= 1.0f;
+					prevPhase = 0.0f;
+				}
+
+				out[n] = modal.ProcessSample();
+			}
+		};
+
+	auto BuildSpectrogramDb = [&](const std::vector<float>& signal, std::vector<float>& outDb,
+		int& outFrames, int& outBins)
+		{
+			const int bins = STFTSize / 2 + 1;
+			outBins = bins;
+
+			if ((int)signal.size() < STFTSize)
+			{
+				outFrames = 0;
+				outDb.clear();
+				return;
+			}
+
+			// hopSize 越大，这里的 frames 越少，STFT 计算量越低
+			const int frames = 1 + ((int)signal.size() - STFTSize) / hopSize;
+			outFrames = frames;
+			outDb.assign(frames * bins, DbMin);
+
+			// Hann window
+			static std::vector<float> win;
+			if ((int)win.size() != STFTSize)
+			{
+				win.resize(STFTSize);
+				for (int i = 0; i < STFTSize; ++i)
+				{
+					win[i] = 0.5f - 0.5f * cosf(2.0f * 3.14159265358979323846f * (float)i / (float)(STFTSize - 1));
+				}
+			}
+
+			std::vector<float> re(STFTSize, 0.0f);
+			std::vector<float> im(STFTSize, 0.0f);
+
+			for (int frame = 0; frame < frames; ++frame)
+			{
+				int base = frame * hopSize;
+
+				for (int i = 0; i < STFTSize; ++i)
+				{
+					re[i] = signal[base + i] * win[i];
+					im[i] = 0.0f;
+				}
+
+				fft(re.data(), im.data(), STFTSize, 1);
+
+				for (int k = 0; k < bins; ++k)
+				{
+					float mag = sqrtf(re[k] * re[k] + im[k] * im[k]);
+					if (mag < 1.0e-20f) mag = 1.0e-20f;
+					outDb[frame * bins + k] = 20.0f * log10f(mag);
+				}
+			}
+		};
+
+	auto DrawSpectrogram = [&](const std::vector<float>& specDb, int frames, int bins, const Rectangle& rc)
+		{
+			if (frames <= 0 || bins <= 1) return;
+
+			// 不管 frames 有多少，都把它们拉伸铺满整个绘图区
+			for (int px = 0; px < (int)rc.width; ++px)
+			{
+				float tx0 = (float)px / (float)rc.width;
+				float tx1 = (float)(px + 1) / (float)rc.width;
+
+				int f0 = (int)floorf(tx0 * frames);
+				int f1 = (int)floorf(tx1 * frames);
+
+				if (f0 < 0) f0 = 0;
+				if (f0 >= frames) f0 = frames - 1;
+				if (f1 <= f0) f1 = f0 + 1;
+				if (f1 > frames) f1 = frames;
+
+				for (int py = 0; py < (int)rc.height; ++py)
+				{
+					float ty0 = (float)py / (float)rc.height;
+					float ty1 = (float)(py + 1) / (float)rc.height;
+
+					// 线性频率轴：顶部 Nyquist，底部 0 Hz
+					int k1 = (int)floorf((1.0f - ty0) * (bins - 1));
+					int k0 = (int)floorf((1.0f - ty1) * (bins - 1));
+
+					if (k0 < 0) k0 = 0;
+					if (k1 < 0) k1 = 0;
+					if (k0 >= bins) k0 = bins - 1;
+					if (k1 >= bins) k1 = bins - 1;
+					if (k1 < k0) std::swap(k0, k1);
+
+					// 一个屏幕像素对应若干 STFT 帧时，取峰值，避免细节被平均抹掉
+					float peakDb = DbMin;
+					for (int fr = f0; fr < f1; ++fr)
+					{
+						for (int k = k0; k <= k1; ++k)
+						{
+							float v = specDb[fr * bins + k];
+							if (v > peakDb) peakDb = v;
+						}
+					}
+
+					Color c = ColorMapDb(peakDb);
+					DrawRectangle((int)rc.x + px, (int)rc.y + py, 1, 1, c);
+				}
+			}
+		};
+
+
 	std::vector<float> nowParams;
-	std::vector<float> targetDb;
 	std::vector<float> nowDb;
+	std::vector<float> sweepSignal;
+	std::vector<float> specDb;
+	int specFrames = 0;
+	int specBins = 0;
 	float lastLoss = 0.0f;
 	int runCount = 0;
 
 	while (!WindowShouldClose())
 	{
-		// 每 run 一次优化，就重算一次频响并绘制
+		// 调 hopSize
+		if (IsKeyPressed(KEY_ONE))   hopSize = 32;
+		if (IsKeyPressed(KEY_TWO))   hopSize = 64;
+		if (IsKeyPressed(KEY_THREE)) hopSize = 128;
+		if (IsKeyPressed(KEY_FOUR))  hopSize = 256;
+
 		lastLoss = opt.RunOptimizer();
 		++runCount;
 
 		opt.GetNowParams(nowParams);
-
-		// 按优化时的约束方式把 pre 转成稳定极点
 		std::vector<float> drawParams = nowParams;
 		opt.Regularization(drawParams);
 
 		SystemModal nowModal;
 		nowModal.CalcPoles(drawParams);
 
+		// 左侧：多 tau 频响
+		std::vector<std::vector<float>> multiTauDb;
+		for (float tau = 0.0f; tau < 1.0f; tau += 0.1f)
+		{
+			multiTauDb.emplace_back();
+			BuildSpectrumDb(nowModal, multiTauDb.back(), tau);
+		}
+
+		// 右侧：扫频冲激串 + STFT 瀑布
+		BuildSweepSignal(nowModal, sweepSignal);
+		BuildSpectrogramDb(sweepSignal, specDb, specFrames, specBins);
 
 		BeginDrawing();
 		ClearBackground(Color{ 18, 18, 22, 255 });
 
-		Rectangle plot = { 100, 60, (float)ScreenW - 160.0f, (float)ScreenH - 160.0f };
-		DrawGrid(plot);
+		// 左侧：多 tau 频响
+		Rectangle leftPlot = { 90, 60, 760, 760 };
+		Rectangle rightPlot = { 980, 60, 720, 760 };
 
-		// 参考/目标曲线
-		DrawSpectrum(targetDb, plot, Color{ 80, 170, 255, 255 });
+		DrawGrid(leftPlot);
+		DrawSpecGrid(rightPlot, SweepDurSec);
 
-		// 当前训练结果曲线
-		for (float tau = 0.0; tau < 1.0; tau += 0.1)
+		for (int i = 0; i < (int)multiTauDb.size(); ++i)
 		{
-			BuildSpectrumDb(nowModal, nowDb, tau);
-			auto col = HSVtoRGB(tau, 1.0f, 1.0f);
-			DrawSpectrum(nowDb, plot, col);
+			float tau = 0.1f * (float)i;
+			Color col = HSVtoRGB(tau, 1.0f, 1.0f);
+			DrawSpectrum(multiTauDb[i], leftPlot, col);
 		}
 
-		DrawText("Frequency Response", 100, 20, 28, RAYWHITE);
+		// 右侧：扫频冲激串 + STFT 瀑布
+		DrawSpectrogram(specDb, specFrames, specBins, rightPlot);
 
-		char info[256];
-		sprintf(info, "Run: %d    Loss: %.6f    X: 20 ~ 48000 Hz (log)    Y: -30 ~ 30 dB",
-			runCount, lastLoss);
-		DrawText(info, 100, ScreenH - 42, 20, LIGHTGRAY);
+		DrawText("Static Response (multi-tau)", 90, 20, 28, RAYWHITE);
+		DrawText("Sweep Waterfall / STFT", 980, 20, 28, RAYWHITE);
+
+		char info[512];
+		sprintf(info,
+			"Run: %d   Loss: %.6f   Sweep: %.0f Hz -> %.0f Hz / %.1f s   STFT: %d   Hop: %d   Keys: [1]=32 [2]=64 [3]=128 [4]=256",
+			runCount, lastLoss, SweepF0, SweepF1, SweepDurSec, STFTSize, hopSize);
+		DrawText(info, 90, ScreenH - 40, 20, LIGHTGRAY);
+
+		// 右下角画个 dB 色条
+		{
+			Rectangle cb = { rightPlot.x + rightPlot.width - 22, rightPlot.y + 20, 16, 220 };
+			for (int i = 0; i < (int)cb.height; ++i)
+			{
+				float t = 1.0f - (float)i / (float)(cb.height - 1);
+				float db = Lerp(DbMin, DbMax, t);
+				DrawRectangle((int)cb.x, (int)(cb.y + i), (int)cb.width, 1, ColorMapDb(db));
+			}
+			DrawRectangleLinesEx(cb, 1.0f, LIGHTGRAY);
+
+			char txt[32];
+			sprintf(txt, "%.0f dB", DbMax);
+			DrawText(txt, (int)cb.x - 70, (int)cb.y - 6, 18, LIGHTGRAY);
+			sprintf(txt, "%.0f dB", DbMin);
+			DrawText(txt, (int)cb.x - 70, (int)(cb.y + cb.height - 12), 18, LIGHTGRAY);
+		}
 
 		EndDrawing();
 	}
