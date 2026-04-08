@@ -123,7 +123,7 @@ void fft(float re[], float im[], int N, int inv)
 class SystemModal
 {
 public:
-	constexpr static int NumOrders = 6;
+	constexpr static int NumOrders = 4;
 private:
 	PoleModal poles[NumOrders];
 	std::vector<float> params;
@@ -317,7 +317,7 @@ Color HSVtoRGB(float h, float s, float v)
 	};
 }
 
-int main()
+int main2()
 {
 	constexpr int ScreenW = 1800;
 	constexpr int ScreenH = 960;
@@ -760,4 +760,313 @@ int main()
 
 	CloseWindow();
 	return 0;
+}
+int main1()
+{
+	constexpr int ScreenW = 1800;
+	constexpr int ScreenH = 960;
+	constexpr float SampleRate = 48000.0f;
+
+	// ---- Sweep / STFT 参数 ----
+	constexpr float SweepDurSec = 3.0f;
+	constexpr int SweepSamples = (int)(SweepDurSec * SampleRate);
+	constexpr float SweepF0 = 2400.0f;
+	constexpr float SweepF1 = 24000.0f;
+
+	constexpr int STFTSize = 1024;
+	int hopSize = 512;
+	constexpr float DbMin = -16.0f;
+	constexpr float DbMax = 16.0f;
+
+	InitWindow(ScreenW, ScreenH, "SystemModal Sweep Spectrogram");
+	SetTargetFPS(60);
+
+	auto Clamp = [](float x, float a, float b) -> float
+		{
+			if (x < a) return a;
+			if (x > b) return b;
+			return x;
+		};
+
+	auto Lerp = [](float a, float b, float t) -> float
+		{
+			return a + (b - a) * t;
+		};
+
+	auto DrawSpecGrid = [&](const Rectangle& rc, float durationSec)
+		{
+			DrawRectangleLinesEx(rc, 1.0f, GRAY);
+
+			for (int i = 0; i <= 6; ++i)
+			{
+				float t = durationSec * (float)i / 6.0f;
+				float x = rc.x + rc.width * ((float)i / 6.0f);
+				DrawLine((int)x, (int)rc.y, (int)x, (int)(rc.y + rc.height), Fade(GRAY, 0.25f));
+
+				char txt[32];
+				sprintf(txt, "%.2fs", t);
+				DrawText(txt, (int)x - 18, (int)(rc.y + rc.height + 8), 18, LIGHTGRAY);
+			}
+
+			const float freqMarks[] = { 0, 4000, 8000, 12000, 16000, 20000, 24000 };
+			for (float f : freqMarks)
+			{
+				float y = rc.y + rc.height * (1.0f - f / 24000.0f);
+				DrawLine((int)rc.x, (int)y, (int)(rc.x + rc.width), (int)y, Fade(GRAY, 0.25f));
+
+				char txt[32];
+				if (f >= 1000.0f) sprintf(txt, "%.0fk", f / 1000.0f);
+				else sprintf(txt, "%.0f", f);
+				DrawText(txt, (int)rc.x - 48, (int)y - 10, 18, LIGHTGRAY);
+			}
+		};
+
+	auto ColorMapDb = [&](float db) -> Color
+		{
+			float t = (db - DbMin) / (DbMax - DbMin);
+			t = Clamp(t, 0.0f, 1.0f);
+
+			float h, s, v;
+			if (t < 0.25f)
+			{
+				float u = t / 0.25f;
+				h = Lerp(0.72f, 0.62f, u);
+				s = 1.0f;
+				v = Lerp(0.08f, 0.45f, u);
+			}
+			else if (t < 0.55f)
+			{
+				float u = (t - 0.25f) / 0.30f;
+				h = Lerp(0.62f, 0.50f, u);
+				s = 1.0f;
+				v = Lerp(0.45f, 0.95f, u);
+			}
+			else if (t < 0.82f)
+			{
+				float u = (t - 0.55f) / 0.27f;
+				h = Lerp(0.50f, 0.15f, u);
+				s = Lerp(1.0f, 0.85f, u);
+				v = 1.0f;
+			}
+			else
+			{
+				float u = (t - 0.82f) / 0.18f;
+				h = Lerp(0.15f, 0.0f, u);
+				s = Lerp(0.85f, 0.0f, u);
+				v = 1.0f;
+			}
+			return HSVtoRGB(h, s, v);
+		};
+
+	auto BuildSweepSignal = [&](SystemModal& modal, std::vector<float>& out)
+		{
+			out.assign(SweepSamples, 0.0f);
+			modal.Reset();
+
+			float phase = 0.0f;
+
+			for (int n = 0; n < SweepSamples; ++n)
+			{
+				float u = (float)n / (float)(SweepSamples - 1);
+
+				// 指数扫频
+				float freq = SweepF0 * powf(SweepF1 / SweepF0, u);
+				float incr = freq / SampleRate;
+
+				float prevPhase = phase;
+				phase += incr;
+
+				while (phase >= 1.0f)
+				{
+					float frac = (1.0f - prevPhase) / incr;
+					float tau = Clamp(frac, 0.0f, 0.999999f);
+					modal.InjectImpulse(tau, 1.0f);
+
+					phase -= 1.0f;
+					prevPhase = 0.0f;
+				}
+
+				out[n] = modal.ProcessSample();
+			}
+		};
+
+	auto BuildSpectrogramDb = [&](const std::vector<float>& signal, std::vector<float>& outDb,
+		int& outFrames, int& outBins)
+		{
+			const int bins = STFTSize / 2 + 1;
+			outBins = bins;
+
+			if ((int)signal.size() < STFTSize)
+			{
+				outFrames = 0;
+				outDb.clear();
+				return;
+			}
+
+			const int frames = 1 + ((int)signal.size() - STFTSize) / hopSize;
+			outFrames = frames;
+			outDb.assign(frames * bins, DbMin);
+
+			static std::vector<float> win;
+			if ((int)win.size() != STFTSize)
+			{
+				win.resize(STFTSize);
+				for (int i = 0; i < STFTSize; ++i)
+				{
+					win[i] = 0.5f - 0.5f * cosf(2.0f * 3.14159265358979323846f * (float)i / (float)(STFTSize - 1));
+				}
+			}
+
+			std::vector<float> re(STFTSize, 0.0f);
+			std::vector<float> im(STFTSize, 0.0f);
+
+			for (int frame = 0; frame < frames; ++frame)
+			{
+				int base = frame * hopSize;
+
+				for (int i = 0; i < STFTSize; ++i)
+				{
+					re[i] = signal[base + i] * win[i];
+					im[i] = 0.0f;
+				}
+
+				fft(re.data(), im.data(), STFTSize, 1);
+
+				for (int k = 0; k < bins; ++k)
+				{
+					float mag = sqrtf(re[k] * re[k] + im[k] * im[k]);
+					if (mag < 1.0e-20f) mag = 1.0e-20f;
+					outDb[frame * bins + k] = 20.0f * log10f(mag);
+				}
+			}
+		};
+
+	auto DrawSpectrogram = [&](const std::vector<float>& specDb, int frames, int bins, const Rectangle& rc)
+		{
+			if (frames <= 0 || bins <= 1) return;
+
+			for (int px = 0; px < (int)rc.width; ++px)
+			{
+				float tx0 = (float)px / (float)rc.width;
+				float tx1 = (float)(px + 1) / (float)rc.width;
+
+				int f0 = (int)floorf(tx0 * frames);
+				int f1 = (int)floorf(tx1 * frames);
+
+				if (f0 < 0) f0 = 0;
+				if (f0 >= frames) f0 = frames - 1;
+				if (f1 <= f0) f1 = f0 + 1;
+				if (f1 > frames) f1 = frames;
+
+				for (int py = 0; py < (int)rc.height; ++py)
+				{
+					float ty0 = (float)py / (float)rc.height;
+					float ty1 = (float)(py + 1) / (float)rc.height;
+
+					int k1 = (int)floorf((1.0f - ty0) * (bins - 1));
+					int k0 = (int)floorf((1.0f - ty1) * (bins - 1));
+
+					if (k0 < 0) k0 = 0;
+					if (k1 < 0) k1 = 0;
+					if (k0 >= bins) k0 = bins - 1;
+					if (k1 >= bins) k1 = bins - 1;
+					if (k1 < k0) std::swap(k0, k1);
+
+					float peakDb = DbMin;
+					for (int fr = f0; fr < f1; ++fr)
+					{
+						for (int k = k0; k <= k1; ++k)
+						{
+							float v = specDb[fr * bins + k];
+							if (v > peakDb) peakDb = v;
+						}
+					}
+
+					Color c = ColorMapDb(peakDb);
+					DrawRectangle((int)rc.x + px, (int)rc.y + py, 1, 1, c);
+				}
+			}
+		};
+
+	// ------------------------------------------------------------
+	// 这里直接写入你求得的“4组上半平面极点 + 对应留数”
+	// 注意：不要把共轭负虚部那4组再放进来
+	// ------------------------------------------------------------
+	std::vector<float> filterParams =
+	{
+		-1709.12968967f, 125567.896527f,  -1767.89568416f,    287.929165394f,
+		-6950.22562103f, 117289.919715f,   5897.38183889f,  -4493.27810287f,
+		-17595.7789053f,  92416.2683686f, -8506.02032331f,  17671.7945935f,
+		-31111.5134548f,  37533.5165410f,  4319.16752093f, -34913.6171257f
+	};
+
+	SystemModal modal;
+	modal.CalcPoles(filterParams);
+
+	std::vector<float> sweepSignal;
+	std::vector<float> specDb;
+	int specFrames = 0;
+	int specBins = 0;
+
+	Rectangle plot = { 120, 60, 1500, 760 };
+
+	// 先生成一次
+	BuildSweepSignal(modal, sweepSignal);
+	BuildSpectrogramDb(sweepSignal, specDb, specFrames, specBins);
+
+	while (!WindowShouldClose())
+	{
+		if (IsKeyPressed(KEY_ONE))   hopSize = 32;
+		if (IsKeyPressed(KEY_TWO))   hopSize = 64;
+		if (IsKeyPressed(KEY_THREE)) hopSize = 128;
+		if (IsKeyPressed(KEY_FOUR))  hopSize = 256;
+
+		// 如果改了 hopSize，就重算一次 STFT
+		if (IsKeyPressed(KEY_ONE) || IsKeyPressed(KEY_TWO) || IsKeyPressed(KEY_THREE) || IsKeyPressed(KEY_FOUR))
+		{
+			BuildSpectrogramDb(sweepSignal, specDb, specFrames, specBins);
+		}
+
+		BeginDrawing();
+		ClearBackground(Color{ 18, 18, 22, 255 });
+
+		DrawSpecGrid(plot, SweepDurSec);
+		DrawSpectrogram(specDb, specFrames, specBins, plot);
+
+		DrawText("Sweep Waterfall / STFT (Fixed Elliptic Poles + Residues)", 120, 20, 28, RAYWHITE);
+
+		char info[512];
+		sprintf(info,
+			"Sweep: %.0f Hz -> %.0f Hz / %.1f s   STFT: %d   Hop: %d   Keys: [1]=32 [2]=64 [3]=128 [4]=256",
+			SweepF0, SweepF1, SweepDurSec, STFTSize, hopSize);
+		DrawText(info, 120, ScreenH - 40, 20, LIGHTGRAY);
+
+		// 色条
+		{
+			Rectangle cb = { plot.x + plot.width - 22, plot.y + 20, 16, 220 };
+			for (int i = 0; i < (int)cb.height; ++i)
+			{
+				float t = 1.0f - (float)i / (float)(cb.height - 1);
+				float db = Lerp(DbMin, DbMax, t);
+				DrawRectangle((int)cb.x, (int)(cb.y + i), (int)cb.width, 1, ColorMapDb(db));
+			}
+			DrawRectangleLinesEx(cb, 1.0f, LIGHTGRAY);
+
+			char txt[32];
+			sprintf(txt, "%.0f dB", DbMax);
+			DrawText(txt, (int)cb.x - 70, (int)cb.y - 6, 18, LIGHTGRAY);
+			sprintf(txt, "%.0f dB", DbMin);
+			DrawText(txt, (int)cb.x - 70, (int)(cb.y + cb.height - 12), 18, LIGHTGRAY);
+		}
+
+		EndDrawing();
+	}
+
+	CloseWindow();
+	return 0;
+}
+
+int main()
+{
+	main1();
 }
