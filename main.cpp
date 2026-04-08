@@ -123,7 +123,7 @@ void fft(float re[], float im[], int N, int inv)
 class SystemModal
 {
 public:
-	constexpr static int NumOrders = 4;
+	constexpr static int NumOrders = 6;
 private:
 	PoleModal poles[NumOrders];
 	std::vector<float> params;
@@ -768,15 +768,15 @@ int main1()
 	constexpr float SampleRate = 48000.0f;
 
 	// ---- Sweep / STFT ²ÎÊý ----
-	constexpr float SweepDurSec = 3.0f;
+	constexpr float SweepDurSec = 6.0f;
 	constexpr int SweepSamples = (int)(SweepDurSec * SampleRate);
 	constexpr float SweepF0 = 2400.0f;
 	constexpr float SweepF1 = 24000.0f;
 
-	constexpr int STFTSize = 1024;
-	int hopSize = 512;
-	constexpr float DbMin = -16.0f;
-	constexpr float DbMax = 16.0f;
+	constexpr int STFTSize = 512;
+	int hopSize = 64;
+	constexpr float DbMin = -60.0f;
+	constexpr float DbMax = 30.0f;
 
 	InitWindow(ScreenW, ScreenH, "SystemModal Sweep Spectrogram");
 	SetTargetFPS(60);
@@ -994,11 +994,14 @@ int main1()
 	// ------------------------------------------------------------
 	std::vector<float> filterParams =
 	{
-		-1709.12968967f, 125567.896527f,  -1767.89568416f,    287.929165394f,
-		-6950.22562103f, 117289.919715f,   5897.38183889f,  -4493.27810287f,
-		-17595.7789053f,  92416.2683686f, -8506.02032331f,  17671.7945935f,
-		-31111.5134548f,  37533.5165410f,  4319.16752093f, -34913.6171257f
+		-21063.386066f, 23870.9014559f, 0.0583185920643f, -0.528378346331f,
+		-17374.1743263f, 67089.1514001f, -0.146510371181f, 0.410903309151f,
+		-12151.9956308f, 99676.7704908f, 0.172563663704f, -0.246988256165f,
+		-7411.46851302f, 120847.503268f, -0.143387503768f, 0.107064051987f,
+		-3835.25322485f, 132839.027666f, 0.0847367893874f, -0.0220047341762f,
+		-1170.4463834f, 138130.842319f, -0.02572248283f, -0.00271585828356f
 	};
+
 
 	SystemModal modal;
 	modal.CalcPoles(filterParams);
