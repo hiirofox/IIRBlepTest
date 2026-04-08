@@ -114,7 +114,7 @@ void fft(float re[], float im[], int N, int inv)
 class SystemModal
 {
 public:
-	constexpr static int NumOrders = 8;
+	constexpr static int NumOrders = 4;
 private:
 	PoleModal poles[NumOrders];
 	std::vector<float> params;
@@ -178,37 +178,178 @@ private:
 	std::vector<float> params2;
 	float Error(std::vector<float>& params)
 	{
-		modal1.Reset();
-		modal2.Reset();
+		// ---------- 可调参数 ----------
+		constexpr float Fs = 48000.0f;
+		constexpr float M_PI = 3.14159265358979323846f;
+
+		// 训练时频谱长度要远大于原来的 128，否则你看到的大量东西只是截断/窗造成的
+		constexpr int FFTLen = 32;
+
+		// 多个 tau 一起训练，覆盖 [0, 1)
+		constexpr int TauCount = 17;
+
+		// 目标低通边界（按 Nyquist 归一化）
+		// pass <= 0.45*Nyquist, stop >= 0.49*Nyquist
+		constexpr float PassEdge = 0.45f;
+		constexpr float StopEdge = 0.49f;
+
+		// 各项 loss 权重
+		constexpr float WPassFlat = 1.0f;   // 平均频响通带平坦
+		constexpr float WStop = 2.0f;   // 阻带抑制
+		constexpr float WConsistency = 40.0f;   // 不同 tau 去相位后的复频响一致
+		constexpr float WGain = 2.0f;   // 通带平均增益锚定在 1
+		constexpr float WTail = 0.02f;  // 尾部能量，减轻“靠超慢极点拖尾骗频响”
+
+		auto sqr = [](float x) -> float { return x * x; };
+		auto clamp01 = [](float x) -> float
+			{
+				if (x < 0.0f) return 0.0f;
+				if (x > 1.0f) return 1.0f;
+				return x;
+			};
+		auto smoothstep = [&](float a, float b, float x) -> float
+			{
+				float t = clamp01((x - a) / (b - a));
+				return t * t * (3.0f - 2.0f * t);
+			};
+
+		// 先做参数规整，再算极点
 		params2 = params;
 		Regularization(params2);
 		modal1.CalcPoles(params2);
-		modal2.CalcPoles(params2);
-		modal1.InjectImpulse(0.0, 1.0);
-		modal2.InjectImpulse(0.5, 1.0);
-		for (int i = 0; i < TestLen; ++i)
+
+		// 保存每个 tau 的“去掉分数延时后的复频响”
+		std::vector<float> meanRe(FFTLen / 2 + 1, 0.0f);
+		std::vector<float> meanIm(FFTLen / 2 + 1, 0.0f);
+
+		std::vector<float> allRe(TauCount * (FFTLen / 2 + 1), 0.0f);
+		std::vector<float> allIm(TauCount * (FFTLen / 2 + 1), 0.0f);
+
+		float tailLoss = 0.0f;
+
+		for (int kt = 0; kt < TauCount; ++kt)
 		{
-			float x = (float)i / (float)TestLen;
-			float w = (1.0 - x * x);
-			float window = w * w;
-			testre1[i] = modal1.ProcessSample() * window;
-			testre2[i] = modal2.ProcessSample() * window;
-			testim1[i] = 0;
-			testim2[i] = 0;
+			float tau = (float)kt / (float)TauCount; // [0,1)
+
+			std::vector<float> re(FFTLen, 0.0f);
+			std::vector<float> im(FFTLen, 0.0f);
+
+			modal1.Reset();
+			modal1.InjectImpulse(tau, 1.0f);
+
+			for (int n = 0; n < FFTLen; ++n)
+			{
+				float y = modal1.ProcessSample();
+				re[n] = y;
+				im[n] = 0.0f;
+
+				// 惩罚尾部能量，避免用极慢衰减模态 + 截断 FFT 伪造频响
+				if (n >= FFTLen / 4)
+					tailLoss += y * y;
+			}
+
+			fft(re.data(), im.data(), FFTLen, 1);
+
+			// 你的离散输出从“下一个采样点”开始，
+			// 所以不同 tau 之间应只差 delay d = 1 - tau 的线性相位
+			float d = 1.0f - tau;
+
+			for (int k = 0; k <= FFTLen / 2; ++k)
+			{
+				float w = 2.0f * PI * (float)k / (float)FFTLen;
+				float c = cosf(w * d);
+				float s = sinf(w * d);
+
+				// 去掉 e^{-jwd}，即乘 e^{+jwd}
+				float rr = re[k] * c - im[k] * s;
+				float ii = re[k] * s + im[k] * c;
+
+				allRe[kt * (FFTLen / 2 + 1) + k] = rr;
+				allIm[kt * (FFTLen / 2 + 1) + k] = ii;
+
+				meanRe[k] += rr;
+				meanIm[k] += ii;
+			}
 		}
-		fft(testre1, testim1, TestLen, 1);
-		fft(testre2, testim2, TestLen, 1);
-		float errv = 0;
-		for (int i = 0; i < TestLen / 2; ++i)
+
+		for (int k = 0; k <= FFTLen / 2; ++k)
 		{
-			float x = (float)i / (float)(TestLen / 2 - 1);
-			float target = x > 0.75 ? 0.05 : 1.0;
-			float mag1 = sqrtf(testre1[i] * testre1[i] + testim1[i] * testim1[i]);
-			float mag2 = sqrtf(testre2[i] * testre2[i] + testim2[i] * testim2[i]);
-			float e1 = fabsf(logf(mag1) - logf(target));
-			float e2 = fabsf(logf(mag2) - logf(target));
-			errv += e1 * e1 + e2 * e2;
+			meanRe[k] /= (float)TauCount;
+			meanIm[k] /= (float)TauCount;
 		}
+
+		float passFlatLoss = 0.0f;
+		float stopLoss = 0.0f;
+		float consistencyLoss = 0.0f;
+		float gainLoss = 0.0f;
+
+		int passCount = 0;
+		int stopCount = 0;
+
+		for (int k = 0; k <= FFTLen / 2; ++k)
+		{
+			float fn = (float)k / (float)(FFTLen / 2); // 0..1 对应 0..Nyquist
+
+			// 平滑低通模板，而不是硬台阶
+			float stopMix = smoothstep(PassEdge, StopEdge, fn); // 0=pass, 1=stop
+			float targetMag = 1.0f - stopMix;
+
+			float mr = meanRe[k];
+			float mi = meanIm[k];
+			float mm = sqrtf(mr * mr + mi * mi + 1.0e-30f);
+
+			if (fn <= PassEdge)
+			{
+				// 通带平坦且接近 1
+				passFlatLoss += sqr(mm - 1.0f);
+				gainLoss += sqr(mm - 1.0f);
+				++passCount;
+			}
+			else if (fn >= StopEdge)
+			{
+				// 阻带能量要小
+				stopLoss += mm * mm;
+				++stopCount;
+			}
+			else
+			{
+				// 过渡带用软目标
+				passFlatLoss += 0.25f * sqr(mm - targetMag);
+			}
+
+			// 不同 tau 去掉线性相位后，复频响应一致
+			for (int kt = 0; kt < TauCount; ++kt)
+			{
+				float rr = allRe[kt * (FFTLen / 2 + 1) + k];
+				float ii = allIm[kt * (FFTLen / 2 + 1) + k];
+
+				float dr = rr - mr;
+				float di = ii - mi;
+
+				// 通带里更强调一致性；阻带里稍微弱一点
+				float w = (fn <= PassEdge) ? 1.0f : 0.2f;
+				consistencyLoss += w * (dr * dr + di * di);
+			}
+		}
+
+		if (passCount > 0)
+		{
+			passFlatLoss /= (float)passCount;
+			gainLoss /= (float)passCount;
+		}
+		if (stopCount > 0)
+			stopLoss /= (float)stopCount;
+
+		consistencyLoss /= (float)(TauCount * (FFTLen / 2 + 1));
+		tailLoss /= (float)(TauCount * FFTLen);
+
+		float errv =
+			WPassFlat * passFlatLoss +
+			WStop * stopLoss +
+			WConsistency * consistencyLoss +
+			WGain * gainLoss +
+			WTail * tailLoss;
+
 		lastloss = errv;
 		return errv;
 	}
@@ -224,7 +365,7 @@ public:
 		}
 		modal1.CalcPoles(initParams);
 		modal2.CalcPoles(initParams);
-		optimizer.SetupOptimizer(NumOrders * 4, initParams, 0.01);
+		optimizer.SetupOptimizer(NumOrders * 4, initParams, 1);
 		optimizer.SetErrorFunc([this](std::vector<float>& params) { return Error(params); });
 	}
 	float RunOptimizer()
@@ -237,15 +378,58 @@ public:
 		optimizer.GetNowVec(params);
 	}
 
+
+
 	void Regularization(std::vector<float>& input)
 	{
-		for (int i = 0; i < NumOrders; i++) {
-			float pre = input[i * 4 + 0];
-			float pim = input[i * 4 + 1];
-			float rre = input[i * 4 + 2];
-			float rim = input[i * 4 + 3];
-			input[i * 4 + 0] = -pre * pre * 1000.0;
-			input[i * 4 + 1] = pim * 24000.0;
+		const float Fs = 48000.0f;
+		const float M_PI = 3.14159265358979323846f;
+		const float NyquistRad = M_PI * Fs; // 因为 O = pim * Ts，所以 pim 必须是 rad/s
+
+		auto sigmoid = [](float x) -> float
+			{
+				if (x >= 0.0f)
+				{
+					float e = expf(-x);
+					return 1.0f / (1.0f + e);
+				}
+				else
+				{
+					float e = expf(x);
+					return e / (1.0f + e);
+				}
+			};
+
+		auto softplus = [](float x) -> float
+			{
+				if (x > 20.0f) return x;
+				if (x < -20.0f) return expf(x);
+				return logf(1.0f + expf(x));
+			};
+
+		for (int i = 0; i < NumOrders; i++)
+		{
+			float rawSigma = input[i * 4 + 0];
+			float rawOmega = input[i * 4 + 1];
+			float rawRre = input[i * 4 + 2];
+			float rawRim = input[i * 4 + 3];
+
+			// 1) 实部必须 < 0，且不要太接近 0，否则靠长拖尾 + 截断频谱作弊
+			//    这里下界给一个最小衰减，再留足动态范围
+			float sigma = -(80.0f + 12000.0f * softplus(rawSigma));
+
+			// 2) 虚部映射到 (0, 0.98*Nyquist) 的 rad/s
+			//    你原来 *24000 的量纲不对；CalcPole 里 O = pim*Ts，所以 pim 应该是 rad/s
+			float omega = 0.98f * NyquistRad * sigmoid(rawOmega);
+
+			// 3) 输出模态系数做有界化，避免数值爆炸
+			//    总幅度按阶数缩放，让 Adam 更容易收敛
+			float gainScale = 2.5f / (float)NumOrders;
+			float rre = gainScale * tanhf(rawRre);
+			float rim = gainScale * tanhf(rawRim);
+
+			input[i * 4 + 0] = sigma;
+			input[i * 4 + 1] = omega;
 			input[i * 4 + 2] = rre;
 			input[i * 4 + 3] = rim;
 		}
