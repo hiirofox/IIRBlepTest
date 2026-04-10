@@ -219,7 +219,7 @@ int main1()
 				}
 				float naive = phase - 0.5;
 				float residue = modal.ProcessSample();
-				out[n] = residue;
+				out[n] = naive - residue;
 			}
 		};
 
@@ -341,6 +341,8 @@ int main1()
 
 			if (signal.empty()) return;
 
+			const float viewAbs = 2.0f;
+			const float yScale = rc.height * 0.42f / viewAbs;
 			float maxAbs = 1.0e-12f;
 			for (float v : signal) {
 				maxAbs = std::max(maxAbs, fabsf(v));
@@ -348,6 +350,23 @@ int main1()
 
 			const float centerY = rc.y + rc.height * 0.5f;
 			DrawLine((int)rc.x, (int)centerY, (int)(rc.x + rc.width), (int)centerY, Fade(GRAY, 0.45f));
+
+			auto DrawDashedLevel = [&](float level, Color color)
+				{
+					float y = centerY - level * yScale;
+					if (y < rc.y || y > rc.y + rc.height) return;
+
+					const float dashLen = 10.0f;
+					const float gapLen = 6.0f;
+					for (float x = rc.x; x < rc.x + rc.width; x += dashLen + gapLen)
+					{
+						float x2 = std::min(x + dashLen, rc.x + rc.width);
+						DrawLineEx(Vector2{ x, y }, Vector2{ x2, y }, 1.0f, color);
+					}
+				};
+
+			DrawDashedLevel(1.0f, Fade(GREEN, 0.7f));
+			DrawDashedLevel(-1.0f, Fade(RED, 0.7f));
 
 			for (int i = 0; i <= 5; ++i)
 			{
@@ -361,19 +380,19 @@ int main1()
 			}
 
 			float prevX = rc.x;
-			float prevY = centerY - (signal[0] / maxAbs) * (rc.height * 0.42f);
+			float prevY = centerY - signal[0] * yScale;
 			for (size_t i = 1; i < signal.size(); ++i)
 			{
 				float t = (float)i / (float)(signal.size() - 1);
 				float x = rc.x + rc.width * t;
-				float y = centerY - (signal[i] / maxAbs) * (rc.height * 0.42f);
+				float y = centerY - signal[i] * yScale;
 				DrawLineEx(Vector2{ prevX, prevY }, Vector2{ x, y }, 1.75f, lineColor);
 				prevX = x;
 				prevY = y;
 			}
 
 			char info[128];
-			sprintf(info, "%s  |  N=%d  |  peak=%.4g", title, ResponseSamples, maxAbs);
+			sprintf(info, "%s  |  N=%d  |  range=[-2,2]  |  peak=%.4g", title, ResponseSamples, maxAbs);
 			DrawText(info, (int)rc.x + 10, (int)rc.y + 8, 18, RAYWHITE);
 		};
 
@@ -383,19 +402,16 @@ int main1()
 	// ------------------------------------------------------------
 	std::vector<float> twoPoleParams =
 	{
-		-20393.067834f, 22959.7277661f, 3135.41653278f, -25077.0029613f,
-		-17529.7962142f, 65459.850832f, -7163.95011011f, 20101.5887077f,
-		-13121.9368141f, 99423.3520631f, 8792.65423224f, -13045.2544527f,
-		-8620.39425619f, 123201.796764f, -7822.79773627f, 6303.04038483f,
-		-4747.224018f, 137664.497606f, 4967.21079899f, -1607.70141958f,
-		-1501.09988595f, 144379.586391f, -1594.09434447f, -39.518743254f
+		-20393.067834f, 22959.7277661f, 2673.63445428f, -24758.1466009f,
+		-17529.7962142f, 65459.850832f, -6949.51288153f, 20118.6234179f,
+		-13121.9368141f, 99423.3520631f, 8696.6515612f, -13092.9216961f,
+		-8620.39425618f, 123201.796764f, -7784.95499271f, 6343.75253664f,
+		-4747.22401804f, 137664.497606f, 4958.37297481f, -1632.04735609f,
+		-1501.09988593f, 144379.586391f, -1594.19770741f, -31.9725851715f
 	};
 
 	std::vector<float> onePoleParams =
 	{
-		-17.6776695297f, -0.109243327874f,
-		-100.0f, 23.3769505182f,
-		-565.685424949f, -652.15970453f
 	};
 
 	std::tuple<float, float> normGain = NormalizationResidues(twoPoleParams, onePoleParams);
