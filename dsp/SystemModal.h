@@ -72,6 +72,10 @@ struct TwoPoleModal
 		z1 += g1;
 		z2 += g2 + a1 * g1;
 	}
+	void InjectStepResidue(float tau, float v)
+	{
+		InjectStep(tau, v);
+	}
 
 	void SetNormGain(float impNormGain, float stepNormGain)
 	{
@@ -145,6 +149,10 @@ struct OnePoleModal
 		float g1 = v * residue * shift / pole * stepNormGain;
 		z1 += g1;
 	}
+	void InjectStepResidue(float tau, float v)
+	{
+		InjectStep(tau, v);
+	}
 
 	void SetNormGain(float impNormGain, float stepNormGain)
 	{
@@ -161,6 +169,7 @@ struct OnePoleModal
 class SystemModal
 {
 public:
+	constexpr static float Ts = 1.0f / 48000.0f;
 private:
 	std::vector<TwoPoleModal> twoPoles;
 	std::vector<OnePoleModal> onePoles;
@@ -229,6 +238,15 @@ public:
 			onePoles[i].InjectStep(tau, v);
 		}
 	}
+	void InjectStepResidue(float tau, float v)
+	{
+		for (int i = 0; i < numTwoPoles; i++) {
+			twoPoles[i].InjectStepResidue(tau, v);
+		}
+		for (int i = 0; i < numOnePoles; i++) {
+			onePoles[i].InjectStepResidue(tau, v);
+		}
+	}
 	float ProcessSample()
 	{
 		float y = 0;
@@ -253,19 +271,76 @@ public:
 
 std::tuple<float, float> NormalizationResidues(std::vector<float>& twoPoleParams, std::vector<float>& onePoleParams)
 {
+	return std::make_tuple(1.0f * SystemModal::Ts, 1.0f);
+	//下面的实现没有考虑到模拟意义。应该直接用模拟的极点和留数就行。
+
 	float magimp = 0;
 	float magstep = 0;
 	for (size_t i = 0; i < twoPoleParams.size() / 4; i++) {
 		std::complex<float> pole = { twoPoleParams[i * 4 + 0], twoPoleParams[i * 4 + 1] };
 		std::complex<float> res = { twoPoleParams[i * 4 + 2], twoPoleParams[i * 4 + 3] };
-		magimp += std::abs(res);
-		magstep += std::abs(res / pole);
+		//magimp += std::abs(res);
+		//magstep += std::abs(res / pole);
+		magimp += res.real() * res.real();
+		res /= pole;
+		magstep += res.real() * res.real();
 	}
 	for (size_t i = 0; i < onePoleParams.size() / 2; i++) {
 		float pre = onePoleParams[i * 2 + 0];
 		float rre = onePoleParams[i * 2 + 1];
-		magimp += fabsf(rre);
-		magstep += fabsf(rre / pre);
+		//magimp += fabsf(rre);
+		//magstep += fabsf(rre / pre);
+		magimp += rre * rre;
+		rre /= pre;
+		magstep += rre * rre;
 	}
+	magimp = sqrtf(magimp);
+	magstep = sqrtf(magstep);
 	return std::make_tuple(1.0 / magimp, 1.0 / magstep);
 }
+
+class IIRBlep
+{
+private:
+	SystemModal modal;
+	float v = 0;
+	float naiveBlit = 0;
+	float naiveBlep = 0;
+public:
+	void Setup(std::vector<float>& twoPoleParams, std::vector<float>& onePoleParams, float impNormGain, float stepNormGain)
+	{
+		modal.CalcPoles(twoPoleParams, onePoleParams);
+		modal.SetNormGain(impNormGain, stepNormGain);
+	}
+	void Add(float tau, float v, int mode)
+	{
+		if (mode == 0)
+		{
+			naiveBlit += v;
+			modal.InjectImpulse(tau, v);
+		}
+		else if (mode == 1)
+		{
+			naiveBlep += v;
+			modal.InjectStep(tau, v);
+		}
+	}
+	void Step()
+	{
+		float y = modal.ProcessSample();
+		v = naiveBlit + naiveBlep - y;
+		naiveBlit = 0;
+		naiveBlep *= 0.999;
+	}
+	float Get()
+	{
+		return v;
+	}
+	void Reset()
+	{
+		modal.Reset();
+		v = 0;
+		naiveBlit = 0;
+		naiveBlep = 0;
+	}
+};

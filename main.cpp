@@ -190,7 +190,7 @@ int main1()
 			return HSVtoRGB(h, s, v);
 		};
 
-	auto BuildSweepSignal = [&](SystemModal& modal, std::vector<float>& out)
+	auto BuildSweepSignal = [&](IIRBlep& modal, std::vector<float>& out)
 		{
 			out.assign(SweepSamples, 0.0f);
 			modal.Reset();
@@ -212,13 +212,14 @@ int main1()
 				{
 					float frac = (1.0f - prevPhase) / incr;
 					float tau = Clamp(frac, 0.0f, 0.999999f);
-					modal.InjectImpulse(tau, 1.0f);
+					modal.Add(tau, -1.0f, 1);
 
 					phase -= 1.0f;
 					prevPhase = 0.0f;
 				}
 				float naive = phase - 0.5;
-				float residue = modal.ProcessSample();
+				modal.Step();
+				float residue = modal.Get();
 				out[n] = naive - residue;
 			}
 		};
@@ -402,16 +403,18 @@ int main1()
 	// ------------------------------------------------------------
 	std::vector<float> twoPoleParams =
 	{
-		-20393.067834f, 22959.7277661f, 2673.63445428f, -24758.1466009f,
-		-17529.7962142f, 65459.850832f, -6949.51288153f, 20118.6234179f,
-		-13121.9368141f, 99423.3520631f, 8696.6515612f, -13092.9216961f,
-		-8620.39425618f, 123201.796764f, -7784.95499271f, 6343.75253664f,
-		-4747.22401804f, 137664.497606f, 4958.37297481f, -1632.04735609f,
-		-1501.09988593f, 144379.586391f, -1594.19770741f, -31.9725851715f
+		-20393.067834f, 22959.7277661f, 3067.58153038f, -25030.4073673f,
+		-17529.7962142f, 65459.850832f, -7132.56204677f, 20104.1271897f,
+		-13121.9368141f, 99423.3520631f, 8778.61074854f, -13052.2446387f,
+		-8620.3942562f, 123201.796764f, -7817.26451764f, 6309.002808f,
+		-4747.224018f, 137664.497606f, 4965.92006838f, -1611.2651103f,
+		-1501.09988595f, 144379.586391f, -1594.11023496f, -38.4144785063f
 	};
 
 	std::vector<float> onePoleParams =
 	{
+		-17.6776695297f, 0.508730255639f,
+		-565.685424949f, -536.873067158f
 	};
 
 	std::tuple<float, float> normGain = NormalizationResidues(twoPoleParams, onePoleParams);
@@ -419,6 +422,8 @@ int main1()
 	SystemModal modal;
 	modal.CalcPoles(twoPoleParams, onePoleParams);
 	modal.SetNormGain(std::get<0>(normGain), std::get<1>(normGain));
+	IIRBlep blep;
+	blep.Setup(twoPoleParams, onePoleParams, std::get<0>(normGain), std::get<1>(normGain));
 
 	std::vector<float> sweepSignal;
 	std::vector<float> specDb;
@@ -435,7 +440,7 @@ int main1()
 	Rectangle impulsePlot = { plot.x, responseY, responseW, responseH };
 	Rectangle stepPlot = { plot.x + responseW + responseGap, responseY, responseW, responseH };
 
-	BuildSweepSignal(modal, sweepSignal);
+	BuildSweepSignal(blep, sweepSignal);
 	BuildSpectrogramDb(sweepSignal, specDb, specFrames, specBins);
 	BuildInjectionResponse(modal, impulseResponse, false);
 	BuildInjectionResponse(modal, stepResponse, true);
