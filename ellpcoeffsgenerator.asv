@@ -18,13 +18,14 @@ function result = design_elliptic_modal_normalized(n, fc_hz, Rp, Rs, fs, dc_bloc
 %     dc_block_order is omitted, the vector length becomes the order).
 
     if nargin < 1 || isempty(n),              n = 12; end
-    if nargin < 2 || isempty(fc_hz),          fc_hz = 23000; end
+    if nargin < 2 || isempty(fc_hz),          fc_hz = 22000; end
     if nargin < 3 || isempty(Rp),             Rp = 1; end
-    if nargin < 4 || isempty(Rs),             Rs = 140; end
+    if nargin < 4 || isempty(Rs),             Rs = 120; end
     if nargin < 5 || isempty(fs),             fs = 48000; end
     if nargin < 6 || isempty(dc_block_rad),   dc_block_rad = 100.0; end
-    if nargin < 7 || isempty(dc_block_order),  dc_block_order = 3; end
-    if nargin < 8 || isempty(dc_spread_oct),  dc_spread_oct = 5; end
+    if nargin < 7 || isempty(dc_block_order) dc_block_order
+   
+    if nargin < 8 || isempty(dc_spread_oct),  dc_spread_oct = 0.5; end
 
     validateattributes(n,              {'numeric'}, {'scalar','integer','positive'});
     validateattributes(fc_hz,          {'numeric'}, {'scalar','positive'});
