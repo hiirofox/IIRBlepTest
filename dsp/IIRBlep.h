@@ -1,7 +1,6 @@
 #pragma once
 
 #include <cmath>
-
 namespace IIRBlepCoeffs
 {
 	constexpr static float Ts = 2.08333333333e-05f;
@@ -30,23 +29,23 @@ namespace IIRBlepCoeffs
 		-0.181575534079f, 0.491896025511f,
 		0.209339859972f, -0.294667076166f,
 		-0.172759144034f, 0.127241233694f,
-		0.101732366827f, -0.0257703058393f,
-		-0.0308112980908f, -0.00343241885385f
+		0.101732366827f, -0.0257703058395f,
+		-0.0308112980905f, -0.00343241885369f
 	};
 	const float onePoleBlitResidues[NumOnePoles] =
 	{
-		8.27364339878e-05f,
-		-0.000664937567861f
+		0.00597529294388f,
+		-0.0242351636074f
 	};
 
 	const float twoPoleBlepResidues[NumTwoPoles * 2] =
 	{
 		-0.757563249836f, 0.511839212437f,
 		0.338279599672f, 0.0340141486742f,
-		-0.142233026f, -0.0770341618384f,
-		0.0510612984666f, 0.0611075520522f,
-		-0.00970294019711f, -0.0341334154492f,
-		-0.00103161367169f, 0.0100321489444f
+		-0.142233026f, -0.0770341618383f,
+		0.0510612984665f, 0.0611075520522f,
+		-0.00970294019698f, -0.034133415449f,
+		-0.00103161367176f, 0.0100321489442f
 	};
 	const float onePoleBlepResidues[NumOnePoles] =
 	{
@@ -60,8 +59,8 @@ namespace IIRBlepCoeffs
 		-0.0336388444697f, -0.217867452746f,
 		-0.0265170417089f, 0.0673541328449f,
 		0.0214771305525f, -0.0203039054153f,
-		-0.0114421920127f, 0.00361261810261f,
-		0.00326622753986f, 0.000307924158118f
+		-0.0114421920127f, 0.00361261810253f,
+		0.00326622753975f, 0.000307924158163f
 	};
 	const float onePoleBlampResidues[NumOnePoles] =
 	{
@@ -69,9 +68,9 @@ namespace IIRBlepCoeffs
 		-4.7875504886f
 	};
 
-	const float blitDirectGain = -2.08333099579e-05f;
-	const float blepDirectGain = 0.0f;
-	const float blampDirectGain = 0.0f;
+	const float blitDirectGain = 2.33753844646e-11;
+	const float blepDirectGain = 0;
+	const float blampDirectGain = 0;
 }
 
 namespace IIRBlepUtils
@@ -238,7 +237,6 @@ namespace IIRBlep2
 		TwoPoleModal twoPoles[IIRBlepCoeffs::NumTwoPoles];
 		OnePoleModal onePoles[IIRBlepCoeffs::NumOnePoles];
 		float v = 0.0f;
-		float directOut = 0.0f;
 
 	public:
 		IIRBlep()
@@ -268,25 +266,20 @@ namespace IIRBlep2
 			const int index2 = index1 + 1;
 			const float frac = fpos - (float)index1;
 
-			float directGain = IIRBlepCoeffs::blitDirectGain;
 			const float(*twoPoleG1Table)[IIRBlepUtils::TableSize] = IIRBlepUtils::twoPoleBlitG1Table;
 			const float(*twoPoleG2Table)[IIRBlepUtils::TableSize] = IIRBlepUtils::twoPoleBlitG2Table;
 			const float(*onePoleG1Table)[IIRBlepUtils::TableSize] = IIRBlepUtils::onePoleBlitG1Table;
 
 			if (mode == IIRBlepUtils::BLEP_MODE) {
-				directGain = IIRBlepCoeffs::blepDirectGain;
 				twoPoleG1Table = IIRBlepUtils::twoPoleBlepG1Table;
 				twoPoleG2Table = IIRBlepUtils::twoPoleBlepG2Table;
 				onePoleG1Table = IIRBlepUtils::onePoleBlepG1Table;
 			}
 			else if (mode == IIRBlepUtils::BLAMP_MODE) {
-				directGain = IIRBlepCoeffs::blampDirectGain;
 				twoPoleG1Table = IIRBlepUtils::twoPoleBlampG1Table;
 				twoPoleG2Table = IIRBlepUtils::twoPoleBlampG2Table;
 				onePoleG1Table = IIRBlepUtils::onePoleBlampG1Table;
 			}
-
-			directOut += directGain * linear_gain;
 
 			for (int i = 0; i < IIRBlepCoeffs::NumTwoPoles; ++i) {
 				const float g1 = IIRBlepUtils::LerpTable(twoPoleG1Table[i], index1, index2, frac) * linear_gain;
@@ -302,8 +295,7 @@ namespace IIRBlep2
 
 		void Step()
 		{
-			float y = directOut;
-			directOut = 0.0f;
+			float y = 0.0f;
 			for (int i = 0; i < IIRBlepCoeffs::NumTwoPoles; ++i) {
 				y += twoPoles[i].ProcessSample();
 			}
@@ -326,7 +318,6 @@ namespace IIRBlep2
 			for (int i = 0; i < IIRBlepCoeffs::NumOnePoles; ++i) {
 				onePoles[i].Reset();
 			}
-			directOut = 0.0f;
 			v = 0.0f;
 		}
 	};

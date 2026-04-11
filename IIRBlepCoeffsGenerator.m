@@ -49,13 +49,19 @@ function result = IIRBlepCoeffsGenerator(n, fc_hz, Rp, Rs, fs, dc_block_rad, dc_
     dc_poles_rad = build_dc_poles(dc_block_rad, dc_block_order, dc_spread_oct);
     [b_dc, a_dc] = make_dc_blocker(dc_poles_rad);
 
-    b_hlp_minus_one = poly_sub(b_lp, a_lp);
-    b_common = conv(b_hlp_minus_one, b_dc);
-    a_common = conv(a_lp, a_dc);
+    s = tf('s');
+    Hlp = tf(b_lp, a_lp);
+    Hantidc = tf(b_dc, a_dc);
 
-    [b_blit, a_blit] = cancel_origin_common_factors(b_common, a_common);
-    [b_blep, a_blep] = cancel_origin_common_factors(b_common, conv(a_common, [1 0]));
-    [b_blamp, a_blamp] = cancel_origin_common_factors(b_common, conv(a_common, [1 0 0]));
+    % Keep the design in transfer-function form so formula experiments stay
+    % local to these three lines.
+    R_blit = minreal(Hlp * Hantidc, 1e-7);
+    R_blep = minreal((Hlp - 1) / s * Hantidc, 1e-7);
+    R_blamp = minreal((Hlp - 1) / (s * s) * Hantidc, 1e-7);
+
+    [b_blit, a_blit] = tf_to_ba(R_blit);
+    [b_blep, a_blep] = tf_to_ba(R_blep);
+    [b_blamp, a_blamp] = tf_to_ba(R_blamp);
 
     models(1) = decompose_residual('blit',  b_blit,  a_blit,  1.0 * Ts);
     models(2) = decompose_residual('blep',  b_blep,  a_blep,  1.0);
@@ -129,6 +135,13 @@ function model = decompose_residual(name, b, a, norm_gain)
     model.r_two = r_two;
     model.p_one = p_one;
     model.r_one = r_one;
+end
+
+function [b, a] = tf_to_ba(H)
+    [b, a] = tfdata(H, 'v');
+    b = trim_leading_zeros(b);
+    a = trim_leading_zeros(a);
+    [b, a] = cancel_origin_common_factors(b, a);
 end
 
 function [pole_error_blep, pole_error_blamp] = check_poles_are_shared(models)
