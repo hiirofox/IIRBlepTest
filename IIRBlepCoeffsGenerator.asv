@@ -11,11 +11,11 @@ function result = IIRBlepCoeffsGenerator(n, fc_hz, Rp, Rs, fs, dc_block_rad, dc_
 % direct feedthrough term which is not represented by modal poles.
 
     if nargin < 1 || isempty(n),                 n = 11; end
-    if nargin < 2 || isempty(fc_hz),             fc_hz = 23000; end
+    if nargin < 2 || isempty(fc_hz),             fc_hz = 20000; end
     if nargin < 3 || isempty(Rp),                Rp = 0.1; end
     if nargin < 4 || isempty(Rs),                Rs = 97.5; end
     if nargin < 5 || isempty(fs),                fs = 48000; end
-    if nargin < 6 || isempty(dc_block_rad),      dc_block_rad = 2.0*pi*20.0; end
+    if nargin < 6 || isempty(dc_block_rad),      dc_block_rad = 400.0; end
     if nargin < 7 || isempty(dc_block_order),    dc_block_order = 3; end
     if nargin < 8 || isempty(dc_spread_oct),     dc_spread_oct = 1; end
     if nargin < 9 || isempty(response_samples),  response_samples = 40; end
@@ -73,34 +73,22 @@ function result = IIRBlepCoeffsGenerator(n, fc_hz, Rp, Rs, fs, dc_block_rad, dc_
     R_blep = minreal((Hlp * Hhp - Hhp) / s, 1e-7);
     R_blamp = minreal((Hlp * Hhp - Hhp) / (s * s), 1e-7);
 
-    % Set this to true when you want to export directly from the readable
-    % transfer-function R_* variables above.  It is convenient for quick
-    % formula experiments, but high-order tf subtraction can leave a tiny
-    % numerical s=0 pole unless minreal() catches it.
-    use_R_tf_export = false;
+    % Build the active transfer functions as polynomials too.  This avoids a
+    % fragile high-order tf subtraction leaving a numerical pole at s=0.
+    b_delta = force_trailing_zeros(poly_sub(b_lp, a_lp), 1, 'Hlp - 1');
+    b_hp = force_trailing_zeros(b_hp, dc_block_order, 'Hhp');
+    b_shared_residual = force_trailing_zeros(conv(b_delta, b_hp), dc_block_order + 1, '(Hlp - 1) * Hhp');
 
-    if use_R_tf_export
-        [b_blit, a_blit] = tf_to_ba(R_blit);
-        [b_blep, a_blep] = tf_to_ba(R_blep);
-        [b_blamp, a_blamp] = tf_to_ba(R_blamp);
-    else
-        % Equivalent polynomial export path.  This avoids a fragile high-order
-        % tf subtraction leaving a numerical pole at s=0.
-        b_delta = force_trailing_zeros(poly_sub(b_lp, a_lp), 1, 'Hlp - 1');
-        b_hp = force_trailing_zeros(b_hp, dc_block_order, 'Hhp');
-        b_shared_residual = force_trailing_zeros(conv(b_delta, b_hp), dc_block_order + 1, '(Hlp - 1) * Hhp');
+    b_blit = conv(b_lp, b_hp);
+    a_blit = conv(a_lp, a_hp);
+    b_blep = b_shared_residual;
+    a_blep = conv(conv(a_lp, a_hp), [1 0]);
+    b_blamp = b_shared_residual;
+    a_blamp = conv(conv(a_lp, a_hp), [1 0 0]);
 
-        b_blit = conv(b_lp, b_hp);
-        a_blit = conv(a_lp, a_hp);
-        b_blep = b_shared_residual;
-        a_blep = conv(conv(a_lp, a_hp), [1 0]);
-        b_blamp = b_shared_residual;
-        a_blamp = conv(conv(a_lp, a_hp), [1 0 0]);
-
-        [b_blit, a_blit] = cancel_origin_common_factors(b_blit, a_blit);
-        [b_blep, a_blep] = cancel_origin_common_factors(b_blep, a_blep);
-        [b_blamp, a_blamp] = cancel_origin_common_factors(b_blamp, a_blamp);
-    end
+    [b_blit, a_blit] = cancel_origin_common_factors(b_blit, a_blit);
+    [b_blep, a_blep] = cancel_origin_common_factors(b_blep, a_blep);
+    [b_blamp, a_blamp] = cancel_origin_common_factors(b_blamp, a_blamp);
 
     models(1) = decompose_residual('blit',  b_blit,  a_blit,  1.0 * Ts);
     models(2) = decompose_residual('blep',  b_blep,  a_blep,  1.0);
