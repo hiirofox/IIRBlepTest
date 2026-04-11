@@ -3,13 +3,11 @@
 #include <vector>
 #include <cmath>
 #include <algorithm>
-#include <tuple>
 
 #include "raylib/src/raylib.h"
 
 #include "dsp/optimizer.h"
-#include "dsp/SystemModal.h"
-
+#include "dsp/IIRBlep.h"
 
 void fft(float re[], float im[], int N, int inv)
 {
@@ -106,11 +104,11 @@ int main1()
 	constexpr float ResponseTau = 0.0f;
 
 	constexpr int STFTSize = 1024;
-	int hopSize = 32;
+	int hopSize = 128;
 	constexpr float DbMin = -30.0f;
 	constexpr float DbMax = 10.0;
 
-	InitWindow(ScreenW, ScreenH, "SystemModal Sweep Spectrogram");
+	InitWindow(ScreenW, ScreenH, "IIRBlep2 Sweep Spectrogram");
 	SetTargetFPS(60);
 
 	auto Clamp = [](float x, float a, float b) -> float
@@ -190,7 +188,7 @@ int main1()
 			return HSVtoRGB(h, s, v);
 		};
 
-	auto BuildSweepSignal = [&](IIRBlep& modal, std::vector<float>& out)
+	auto BuildSweepSignal = [&](IIRBlep2::IIRBlep& modal, std::vector<float>& out)
 		{
 			out.assign(SweepSamples, 0.0f);
 			modal.Reset();
@@ -212,7 +210,7 @@ int main1()
 				{
 					float frac = (1.0f - prevPhase) / incr;
 					float tau = Clamp(frac, 0.0f, 0.999999f);
-					modal.Add(tau, -1.0f, 0);
+					modal.Add(tau, -1.0f, 1);
 
 					phase -= 1.0f;
 					prevPhase = 0.0f;
@@ -275,20 +273,17 @@ int main1()
 			}
 		};
 
-	auto BuildInjectionResponse = [&](SystemModal& modal, std::vector<float>& out, bool stepMode)
+	auto BuildResidualResponse = [&](std::vector<float>& out, int mode)
 		{
 			out.assign(ResponseSamples, 0.0f);
+			IIRBlep2::IIRBlep modal;
 			modal.Reset();
-
-			if (stepMode)
-			{
-				//modal.InjectStep(ResponseTau, 1.0f);
-			}
-			else modal.InjectImpulse(ResponseTau, 1.0f);
+			modal.Add(ResponseTau, 1.0f, mode);
 
 			for (int n = 0; n < ResponseSamples; ++n)
 			{
-				out[n] = modal.ProcessSample();
+				modal.Step();
+				out[n] = modal.Get();
 			}
 		};
 
@@ -404,35 +399,13 @@ int main1()
 	// 这里直接写入你求得的“4组上半平面极点 + 对应留数”
 	// 注意：不要把共轭负虚部那4组再放进来
 	// ------------------------------------------------------------
-	std::vector<float> twoPoleParams =
-	{
-		-22499.526025f, 25498.4629188f, -0.757564099837f, 0.511839786731f,
-		-18558.7771212f, 71663.4117229f, 0.338279979228f, 0.0340141868387f,
-		-12980.5407875f, 106472.913933f, -0.142233185588f, -0.0770342482721f,
-		-7916.79591168f, 129087.105763f, 0.0510613557583f, 0.0611076206161f,
-		-4096.74776281f, 141896.234098f, -0.00970295108387f, -0.0341334537474f,
-		-1250.24954596f, 147548.854296f, -0.00103161482926f, 0.0100321602005f
-	};
-
-	std::vector<float> onePoleParams =
-	{
-		-282.842712475f, -0.0140408541999f,
-		-565.685424949f, 0.0564218869024f
-	};
-
-	//std::tuple<float, float> normGain = NormalizationResidues(twoPoleParams, onePoleParams);
-	std::tuple<float, float> normGain = std::make_tuple(1.0f, 1.0f);
-
-	SystemModal modal;
-	modal.CalcPoles(twoPoleParams, onePoleParams);
-	modal.SetNormGain(std::get<0>(normGain), std::get<1>(normGain));
-	IIRBlep blep;
-	blep.Setup(twoPoleParams, onePoleParams, std::get<0>(normGain), std::get<1>(normGain));
+	IIRBlep2::IIRBlep blep;
 
 	std::vector<float> sweepSignal;
 	std::vector<float> specDb;
-	std::vector<float> impulseResponse;
-	std::vector<float> stepResponse;
+	std::vector<float> blitResponse;
+	std::vector<float> blepResponse;
+	std::vector<float> blampResponse;
 	int specFrames = 0;
 	int specBins = 0;
 
@@ -440,14 +413,16 @@ int main1()
 	const float responseGap = 20.0f;
 	const float responseY = plot.y + plot.height + 40.0f;
 	const float responseH = ScreenH - responseY - 76;
-	const float responseW = (plot.width - responseGap) * 0.5f;
-	Rectangle impulsePlot = { plot.x, responseY, responseW, responseH };
-	Rectangle stepPlot = { plot.x + responseW + responseGap, responseY, responseW, responseH };
+	const float responseW = (plot.width - responseGap * 2.0f) / 3.0f;
+	Rectangle blitPlot = { plot.x, responseY, responseW, responseH };
+	Rectangle blepPlot = { plot.x + responseW + responseGap, responseY, responseW, responseH };
+	Rectangle blampPlot = { plot.x + (responseW + responseGap) * 2.0f, responseY, responseW, responseH };
 
 	BuildSweepSignal(blep, sweepSignal);
 	BuildSpectrogramDb(sweepSignal, specDb, specFrames, specBins);
-	BuildInjectionResponse(modal, impulseResponse, false);
-	BuildInjectionResponse(modal, stepResponse, true);
+	BuildResidualResponse(blitResponse, IIRBlepUtils::BLIT_MODE);
+	BuildResidualResponse(blepResponse, IIRBlepUtils::BLEP_MODE);
+	BuildResidualResponse(blampResponse, IIRBlepUtils::BLAMP_MODE);
 
 	while (!WindowShouldClose())
 	{
@@ -457,10 +432,11 @@ int main1()
 
 		DrawSpecGrid(plot, SweepDurSec);
 		DrawSpectrogram(specDb, specFrames, specBins, plot);
-		DrawResponsePlot(impulseResponse, impulsePlot, "InjectImpulse Response", SKYBLUE);
-		DrawResponsePlot(stepResponse, stepPlot, "InjectStepResidue Response", ORANGE);
+		DrawResponsePlot(blitResponse, blitPlot, "BLIT residue: Add(0, 1, 0)", SKYBLUE);
+		DrawResponsePlot(blepResponse, blepPlot, "BLEP residue: Add(0, 1, 1)", ORANGE);
+		DrawResponsePlot(blampResponse, blampPlot, "BLAMP residue: Add(0, 1, 2)", LIME);
 
-		DrawText("Sweep Waterfall / STFT (Fixed Elliptic Poles + Residues)", 120, 20, 28, RAYWHITE);
+		DrawText("Sweep Waterfall / STFT (IIRBlep2 Shared Poles + Residue Modes)", 120, 20, 28, RAYWHITE);
 
 		char info[512];
 		sprintf(info,

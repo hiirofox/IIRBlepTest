@@ -1,0 +1,356 @@
+function result = IIRBlepCoeffsGenerator(n, fc_hz, Rp, Rs, fs, dc_block_rad, dc_block_order, dc_spread_oct, response_samples)
+%IIRBlepCoeffsGenerator Generate shared-pole BLIT/BLEP/BLAMP modal coeffs.
+%
+% Residual transfer functions:
+%   BLIT  : (Hlp - 1)              * Hantidc, gain = 1
+%   BLEP  : (Hlp - 1) / s          * Hantidc, gain = 1/Ts
+%   BLAMP : (Hlp - 1) / (s * s)    * Hantidc, gain = 1/Ts
+%
+% The printed namespace is meant to replace the IIRBlepCoeffs namespace in
+% dsp/IIRBlep.h.  Direct gains are printed too, because BLIT can contain a
+% direct feedthrough term which is not represented by modal poles.
+
+    if nargin < 1 || isempty(n),                 n = 12; end
+    if nargin < 2 || isempty(fc_hz),             fc_hz = 23500; end
+    if nargin < 3 || isempty(Rp),                Rp = 1; end
+    if nargin < 4 || isempty(Rs),                Rs = 120; end
+    if nargin < 5 || isempty(fs),                fs = 48000; end
+    if nargin < 6 || isempty(dc_block_rad),      dc_block_rad = 400.0; end
+    if nargin < 7 || isempty(dc_block_order),    dc_block_order = 2; end
+    if nargin < 8 || isempty(dc_spread_oct),     dc_spread_oct = 1; end
+    if nargin < 9 || isempty(response_samples),  response_samples = 40; end
+
+    validateattributes(n,                {'numeric'}, {'scalar','integer','positive'});
+    validateattributes(fc_hz,            {'numeric'}, {'scalar','positive'});
+    validateattributes(Rp,               {'numeric'}, {'scalar','positive'});
+    validateattributes(Rs,               {'numeric'}, {'scalar','positive'});
+    validateattributes(fs,               {'numeric'}, {'scalar','positive'});
+    validateattributes(dc_block_order,   {'numeric'}, {'scalar','integer','positive'});
+    validateattributes(dc_spread_oct,    {'numeric'}, {'scalar','nonnegative'});
+    validateattributes(response_samples, {'numeric'}, {'scalar','integer','positive'});
+
+    if isscalar(dc_block_rad)
+        validateattributes(dc_block_rad, {'numeric'}, {'scalar','positive'});
+    else
+        validateattributes(dc_block_rad, {'numeric'}, {'vector','positive'});
+    end
+
+    Ts = 1 / fs;
+    wc = 2*pi*fc_hz;
+
+    [z, p0, k0] = ellipap(n, Rp, Rs);
+    [b0, a0] = zp2tf(z, p0, k0);
+    [b_lp, a_lp] = lp2lp(b0, a0, wc);
+
+    Hlp0_before = polyval(b_lp, 0) / polyval(a_lp, 0);
+    b_lp = b_lp / Hlp0_before;
+    Hlp0 = polyval(b_lp, 0) / polyval(a_lp, 0);
+
+    dc_poles_rad = build_dc_poles(dc_block_rad, dc_block_order, dc_spread_oct);
+    [b_dc, a_dc] = make_dc_blocker(dc_poles_rad);
+
+    b_hlp_minus_one = poly_sub(b_lp, a_lp);
+    b_common = conv(b_hlp_minus_one, b_dc);
+    a_common = conv(a_lp, a_dc);
+
+    [b_blit, a_blit] = cancel_origin_common_factors(b_common, a_common);
+    [b_blep, a_blep] = cancel_origin_common_factors(b_common, conv(a_common, [1 0]));
+    [b_blamp, a_blamp] = cancel_origin_common_factors(b_common, conv(a_common, [1 0 0]));
+
+    models(1) = decompose_residual('blit',  b_blit,  a_blit,  1.0 * Ts);
+    models(2) = decompose_residual('blep',  b_blep,  a_blep,  1.0);
+    models(3) = decompose_residual('blamp', b_blamp, a_blamp, 1.0 / Ts);
+
+    [pole_error_blep, pole_error_blamp] = check_poles_are_shared(models);
+
+    fprintf('====================================================\n');
+    fprintf('IIRBlep shared-pole coefficient export\n');
+    fprintf('Elliptic order n          = %d\n', n);
+    fprintf('Cutoff fc                 = %.12g Hz\n', fc_hz);
+    fprintf('Passband ripple Rp        = %.12g dB\n', Rp);
+    fprintf('Stopband attenuation Rs   = %.12g dB\n', Rs);
+    fprintf('Sample rate fs            = %.12g Hz\n', fs);
+    fprintf('Ts                        = %.12g\n', Ts);
+    fprintf('Hlp(0) before normalize   = %.12g %+.12gj\n', real(Hlp0_before), imag(Hlp0_before));
+    fprintf('Hlp(0) after normalize    = %.12g %+.12gj\n', real(Hlp0), imag(Hlp0));
+    fprintf('DC blocker poles (rad/s)  = ');
+    fprintf('%.12g ', dc_poles_rad);
+    fprintf('\n');
+    fprintf('Pole consistency error    = BLEP %.12g, BLAMP %.12g rad/s\n', pole_error_blep, pole_error_blamp);
+    for i = 1:numel(models)
+        fprintf('%-5s directGain           = %.12g %+.12gj\n', upper(models(i).name), real(models(i).directGain), imag(models(i).directGain));
+        fprintf('%-5s modal h(0+)          = %.12g %+.12gj\n', upper(models(i).name), real(sum(models(i).residues)), imag(sum(models(i).residues)));
+    end
+    fprintf('Two-pole modal count      = %d\n', numel(models(1).p_two));
+    fprintf('One-pole modal count      = %d\n', numel(models(1).p_one));
+    fprintf('====================================================\n\n');
+
+    print_cpp_namespace(Ts, models);
+    plot_residuals(models, fs, response_samples);
+
+    result = struct();
+    result.fs = fs;
+    result.Ts = Ts;
+    result.n = n;
+    result.fc_hz = fc_hz;
+    result.Rp = Rp;
+    result.Rs = Rs;
+    result.b_lp = b_lp;
+    result.a_lp = a_lp;
+    result.b_dc = b_dc;
+    result.a_dc = a_dc;
+    result.dc_block_poles_rad = dc_poles_rad;
+    result.models = models;
+    result.pole_error_blep = pole_error_blep;
+    result.pole_error_blamp = pole_error_blamp;
+end
+
+function model = decompose_residual(name, b, a, norm_gain)
+    b = trim_leading_zeros(b) * norm_gain;
+    a = trim_leading_zeros(a);
+
+    [r_all, p_all, k_dir] = residue(b, a);
+    if numel(k_dir) > 1
+        warning('%s residual returned a polynomial direct term with %d coefficients. Current C++ modal path only expects scalar direct feedthrough.', upper(name), numel(k_dir));
+    end
+
+    [p_two, r_two, p_one, r_one] = split_modal_poles(p_all, r_all);
+
+    model = struct();
+    model.name = name;
+    model.norm_gain = norm_gain;
+    model.b = b;
+    model.a = a;
+    model.poles = p_all;
+    model.residues = r_all;
+    model.k_dir = k_dir;
+    model.directGain = sum(k_dir);
+    model.p_two = p_two;
+    model.r_two = r_two;
+    model.p_one = p_one;
+    model.r_one = r_one;
+end
+
+function [pole_error_blep, pole_error_blamp] = check_poles_are_shared(models)
+    p_ref = modal_pole_vector(models(1));
+    p_blep = modal_pole_vector(models(2));
+    p_blamp = modal_pole_vector(models(3));
+
+    pole_error_blep = compare_poles(p_ref, p_blep, 'BLIT', 'BLEP');
+    pole_error_blamp = compare_poles(p_ref, p_blamp, 'BLIT', 'BLAMP');
+end
+
+function err = compare_poles(p_ref, p_test, ref_name, test_name)
+    if numel(p_ref) ~= numel(p_test)
+        error('%s and %s do not have the same pole count: %d vs %d.', ref_name, test_name, numel(p_ref), numel(p_test));
+    end
+
+    if isempty(p_ref)
+        err = 0;
+        return;
+    end
+
+    d = p_ref(:) - p_test(:);
+    err = max(abs(d));
+    tol = 1e-5 * max(1, max(abs(p_ref(:))));
+    if err > tol
+        error('%s and %s pole locations differ. max error = %.12g, tol = %.12g.', ref_name, test_name, err, tol);
+    end
+end
+
+function p = modal_pole_vector(model)
+    p = [model.p_two(:); model.p_one(:)];
+end
+
+function [b_dc, a_dc] = make_dc_blocker(dc_poles_rad)
+    b_dc = 1;
+    a_dc = 1;
+    for i = 1:numel(dc_poles_rad)
+        b_dc = conv(b_dc, [1 0]);
+        a_dc = conv(a_dc, [1 dc_poles_rad(i)]);
+    end
+end
+
+function dc_poles_rad = build_dc_poles(dc_block_rad, dc_block_order, dc_spread_oct)
+    if isscalar(dc_block_rad)
+        if dc_block_order == 1
+            dc_poles_rad = dc_block_rad;
+            return;
+        end
+        if dc_spread_oct == 0
+            error('dc_spread_oct must be > 0 when scalar dc_block_rad creates multiple simple poles.');
+        end
+
+        offsets = linspace(-0.5, 0.5, dc_block_order) * dc_spread_oct;
+        dc_poles_rad = dc_block_rad * (2 .^ offsets);
+        return;
+    end
+
+    dc_poles_rad = dc_block_rad(:).';
+    if numel(dc_poles_rad) ~= dc_block_order
+        error('When dc_block_rad is a vector, its length must match dc_block_order.');
+    end
+
+    sorted_poles = sort(dc_poles_rad);
+    min_gap = min(abs(diff(sorted_poles)));
+    if min_gap <= 1e-9 * max(1, max(abs(sorted_poles)))
+        error('dc_block_rad contains repeated or near-repeated poles. Use distinct simple poles for OnePoleModal.');
+    end
+end
+
+function [p_two, r_two, p_one, r_one] = split_modal_poles(p_all, r_all)
+    real_pole_tol = 1e-7;
+    real_mask = abs(imag(p_all)) <= real_pole_tol * max(1, abs(p_all));
+    pos_imag_mask = imag(p_all) > real_pole_tol * max(1, abs(p_all));
+
+    p_two = p_all(pos_imag_mask);
+    r_two = r_all(pos_imag_mask);
+    [~, two_order] = sort(imag(p_two));
+    p_two = p_two(two_order);
+    r_two = r_two(two_order);
+
+    p_one = real(p_all(real_mask));
+    r_one = r_all(real_mask);
+    [~, one_order] = sort(abs(p_one));
+    p_one = p_one(one_order);
+    r_one = r_one(one_order);
+
+    if any(abs(imag(r_one)) > 1e-7 * max(1, abs(r_one)))
+        warning('Some residues on numerically-real poles are not purely real. Export uses their real parts.');
+    end
+end
+
+function c = poly_sub(a, b)
+    n = max(numel(a), numel(b));
+    a = [zeros(1, n - numel(a)), a(:).'];
+    b = [zeros(1, n - numel(b)), b(:).'];
+    c = a - b;
+end
+
+function [b, a] = cancel_origin_common_factors(b, a)
+    b = trim_leading_zeros(b);
+    a = trim_leading_zeros(a);
+    scale = max([1, abs(b), abs(a)]);
+    tol = 1e-10 * scale;
+
+    while numel(b) > 1 && numel(a) > 1 && abs(b(end)) <= tol && abs(a(end)) <= tol
+        b = b(1:end-1);
+        a = a(1:end-1);
+    end
+end
+
+function v = trim_leading_zeros(v)
+    v = v(:).';
+    idx = find(v ~= 0, 1, 'first');
+    if isempty(idx)
+        v = 0;
+    else
+        v = v(idx:end);
+    end
+end
+
+function plot_residuals(models, fs, response_samples)
+    t_samples = (0:response_samples-1) / fs;
+    t_analog = linspace(0, t_samples(end), max(4096, response_samples * 128));
+
+    figure('Name', 'IIRBlep residual impulse responses');
+    for i = 1:numel(models)
+        h_samples = modal_response(models(i), t_samples);
+        if ~isempty(models(i).k_dir)
+            h_samples(1) = h_samples(1) + real(models(i).directGain);
+        end
+
+        h_analog = modal_response(models(i), t_analog);
+
+        subplot(numel(models), 1, i);
+        plot(t_analog * 1000, h_analog, 'LineWidth', 1.2);
+        hold on;
+        plot(t_samples * 1000, h_samples, '.', 'MarkerSize', 10);
+        plot([t_analog(1), t_analog(end)] * 1000, [0, 0], ':');
+        grid on;
+        xlabel('Time (ms)');
+        ylabel('h(t)');
+        title(sprintf('%s residual impulse response, first %d samples, directGain = %.4g', upper(models(i).name), response_samples, real(models(i).directGain)));
+        xlim([0, t_analog(end) * 1000]);
+    end
+end
+
+function h = modal_response(model, t)
+    h = real(sum(bsxfun(@times, model.residues(:), exp(model.poles(:) * t)), 1));
+end
+
+function print_cpp_namespace(Ts, models)
+    p_two = models(1).p_two;
+    p_one = models(1).p_one;
+
+    fprintf('namespace IIRBlepCoeffs\n');
+    fprintf('{\n');
+    fprintf('\tconstexpr static float Ts = %.12gf;\n', Ts);
+    fprintf('\tconstexpr static int NumTwoPoles = %d;\n', numel(p_two));
+    fprintf('\tconstexpr static int NumOnePoles = %d;\n\n', numel(p_one));
+
+    print_cpp_array(two_pole_params_vector(p_two), 'twoPoleParams', 'NumTwoPoles * 2', 2);
+    fprintf('\n');
+    print_cpp_array(real(p_one(:)).', 'onePoleParams', 'NumOnePoles', 1);
+    fprintf('\n');
+
+    print_cpp_array(two_pole_residue_vector(models(1).r_two), 'twoPoleBlitResidues', 'NumTwoPoles * 2', 2);
+    print_cpp_array(real(models(1).r_one(:)).', 'onePoleBlitResidues', 'NumOnePoles', 1);
+    fprintf('\n');
+    print_cpp_array(two_pole_residue_vector(models(2).r_two), 'twoPoleBlepResidues', 'NumTwoPoles * 2', 2);
+    print_cpp_array(real(models(2).r_one(:)).', 'onePoleBlepResidues', 'NumOnePoles', 1);
+    fprintf('\n');
+    print_cpp_array(two_pole_residue_vector(models(3).r_two), 'twoPoleBlampResidues', 'NumTwoPoles * 2', 2);
+    print_cpp_array(real(models(3).r_one(:)).', 'onePoleBlampResidues', 'NumOnePoles', 1);
+    fprintf('\n');
+
+    fprintf('\tconst float blitDirectGain = %.12g;\n', real(models(1).directGain));
+    fprintf('\tconst float blepDirectGain = %.12g;\n', real(models(2).directGain));
+    fprintf('\tconst float blampDirectGain = %.12g;\n', real(models(3).directGain));
+    fprintf('}\n');
+end
+
+function v = two_pole_params_vector(p_two)
+    v = zeros(1, numel(p_two) * 2);
+    for i = 1:numel(p_two)
+        v((i-1)*2 + 1) = real(p_two(i));
+        v((i-1)*2 + 2) = imag(p_two(i));
+    end
+end
+
+function v = two_pole_residue_vector(r_two)
+    v = zeros(1, numel(r_two) * 2);
+    for i = 1:numel(r_two)
+        v((i-1)*2 + 1) = real(r_two(i));
+        v((i-1)*2 + 2) = imag(r_two(i));
+    end
+end
+
+function print_cpp_array(v, name, size_expr, stride)
+    fprintf('\tconst float %s[%s] =\n', name, size_expr);
+    fprintf('\t{\n');
+
+    if isempty(v)
+        fprintf('\t};\n');
+        return;
+    end
+
+    for i = 1:stride:numel(v)
+        fprintf('\t\t');
+        for j = 0:stride-1
+            idx = i + j;
+            if idx <= numel(v)
+                fprintf('%.12gf', v(idx));
+            end
+            if j + 1 < stride && idx + 1 <= numel(v)
+                fprintf(', ');
+            end
+        end
+        if i + stride - 1 < numel(v)
+            fprintf(',');
+        end
+        fprintf('\n');
+    end
+
+    fprintf('\t};\n');
+end

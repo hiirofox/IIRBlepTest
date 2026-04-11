@@ -312,6 +312,7 @@ std::tuple<float, float> NormalizationResidues(std::vector<float>& twoPoleParams
 	return std::make_tuple(1.0 / magimp, 1.0 / magstep);
 }
 
+
 class IIRBlep
 {
 private:
