@@ -18,6 +18,10 @@ struct TwoPoleModal
 	std::complex<float> residue = { 0, 0 };
 	std::complex<float> step1 = { 1, 0 };
 
+	constexpr static int TableSize = 32;
+	float g1Table[TableSize];
+	float g2Table[TableSize];
+
 	float impNormGain = 1.0;
 	float stepNormGain = 1.0;
 
@@ -44,8 +48,18 @@ struct TwoPoleModal
 		pole = std::complex<float>(pre, pim);
 		residue = std::complex<float>(rre, rim);
 		step1 = std::exp(pole * Ts);
-	}
 
+		for (int i = 0; i < TableSize; i++) {
+			float tau = (float)i / (TableSize - 2);
+			float dt1 = (1.0f - tau) * Ts;
+			std::complex<float> shift = std::exp(pole * dt1);
+			std::complex<float> A1 = residue * shift;
+			std::complex<float> A2 = A1 * step1;
+			g1Table[i] = 2.0f * A1.real() * impNormGain;
+			g2Table[i] = 2.0f * A2.real() * impNormGain;
+		}
+	}
+	/*
 	void InjectImpulse(float tau, float v)
 	{
 		if (tau < 0.0f) tau = 0.0f;
@@ -59,16 +73,18 @@ struct TwoPoleModal
 		z1 += g1;
 		z2 += g2 + a1 * g1;
 	}
-	void InjectStep(float tau, float v)
+	*/
+	void InjectImpulse(float tau, float v)
 	{
 		if (tau < 0.0f) tau = 0.0f;
 		if (tau >= 1.0f) tau = 1.0f;
-		float dt1 = (1.0f - tau) * Ts;
-		std::complex<float> shift = std::exp(pole * dt1);
-		std::complex<float> A1 = v * residue * shift / pole;
-		std::complex<float> A2 = A1 * step1;
-		float g1 = 2.0f * A1.real() * stepNormGain;
-		float g2 = 2.0f * A2.real() * stepNormGain;
+		int index1 = tau * (TableSize - 2);
+		int index2 = index1 + 1;
+		float frac = tau * (TableSize - 2) - index1;
+		float g1 = frac * (g1Table[index2] - g1Table[index1]) + g1Table[index1];
+		float g2 = frac * (g2Table[index2] - g2Table[index1]) + g2Table[index1];
+		g1 *= v;
+		g2 *= v;
 		z1 += g1;
 		z2 += g2 + a1 * g1;
 	}
@@ -98,6 +114,8 @@ struct OnePoleModal
 	float pole = 0;
 	float residue = 0;
 	float step1 = 1;
+	constexpr static int TableSize = 32;
+	float g1Table[TableSize];
 
 	float impNormGain = 1.0f;
 	float stepNormGain = 1.0f;
@@ -118,6 +136,14 @@ struct OnePoleModal
 		residue = rre;
 		step1 = expf(pre * Ts);
 		a1 = -step1;
+
+		for (int i = 0; i < TableSize; i++) {
+			float tau = (float)i / (TableSize - 2);
+			float dt1 = (1.0f - tau) * Ts;
+			float shift = expf(pole * dt1);
+			float g1 = residue * shift * impNormGain;
+			g1Table[i] = g1;
+		}
 	}
 
 	void CalcPole(float pre, float pim, float rre, float rim)
@@ -127,6 +153,7 @@ struct OnePoleModal
 		CalcPole(pre, rre);
 	}
 
+	/*
 	void InjectImpulse(float tau, float v)
 	{
 		if (tau < 0.0f) tau = 0.0f;
@@ -135,14 +162,16 @@ struct OnePoleModal
 		float shift = expf(pole * dt1);
 		float g1 = v * residue * shift * impNormGain;
 		z1 += g1;
-	}
-	void InjectStep(float tau, float v)
+	}*/
+	void InjectImpulse(float tau, float v)
 	{
 		if (tau < 0.0f) tau = 0.0f;
 		if (tau >= 1.0f) tau = 1.0f;
-		float dt1 = (1.0f - tau) * Ts;
-		float shift = expf(pole * dt1);
-		float g1 = v * residue * shift / pole * stepNormGain;
+		int index1 = tau * (TableSize - 2);
+		int index2 = index1 + 1;
+		float frac = tau * (TableSize - 2) - index1;
+		float g1 = frac * (g1Table[index2] - g1Table[index1]) + g1Table[index1];
+		g1 *= v;
 		z1 += g1;
 	}
 
@@ -221,15 +250,6 @@ public:
 			onePoles[i].InjectImpulse(tau, v);
 		}
 	}
-	void InjectStep(float tau, float v)
-	{
-		for (int i = 0; i < numTwoPoles; i++) {
-			twoPoles[i].InjectStep(tau, v);
-		}
-		for (int i = 0; i < numOnePoles; i++) {
-			onePoles[i].InjectStep(tau, v);
-		}
-	}
 	float ProcessSample()
 	{
 		float y = 0;
@@ -287,8 +307,6 @@ class IIRBlep
 private:
 	SystemModal modal;
 	float v = 0;
-	float naiveBlit = 0;
-	float naiveBlep = 0;
 public:
 	void Setup(std::vector<float>& twoPoleParams, std::vector<float>& onePoleParams, float impNormGain, float stepNormGain)
 	{
@@ -297,19 +315,11 @@ public:
 	}
 	void Add(float tau, float v, int mode)
 	{
-		if (mode == 0)
-		{
-			modal.InjectImpulse(tau, v);
-		}
-		else if (mode == 1)
-		{
-			modal.InjectStep(tau, v);
-		}
+		modal.InjectImpulse(tau, v);
 	}
 	void Step()
 	{
-		float y = modal.ProcessSample();
-		v = y;
+		v = modal.ProcessSample();
 	}
 	float Get()
 	{
@@ -319,7 +329,5 @@ public:
 	{
 		modal.Reset();
 		v = 0;
-		naiveBlit = 0;
-		naiveBlep = 0;
 	}
 };

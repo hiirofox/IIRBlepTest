@@ -2,11 +2,11 @@ function result = stepresiduecoeffsgenerator(n, fc_hz, Rp, Rs, fs, dc_block_rad,
 % Analog step-residual modal export for direct InjectImpulse() playback.
 %
 % Transfer function:
-%   R(s) = (Hlp(s) - 1) / s * Hantidc(s)
+%   R(s) = -Hhp(s) / s * Hantidc(s)
 %
 % Defaults:
 %   Hlp      : 12th-order analog elliptic low-pass, DC-normalized to Hlp(0)=1
-%   Hhp      : 12th-order analog elliptic high-pass, generated for comparison
+%   Hhp      : 12th-order analog elliptic high-pass, normalized to Hhp(inf)=1
 %   Hantidc : 2nd-order DC blocker, prod_k s / (s + wd_k)
 %
 % Export format:
@@ -18,14 +18,14 @@ function result = stepresiduecoeffsgenerator(n, fc_hz, Rp, Rs, fs, dc_block_rad,
 %   If residue() returns a direct term k_dir for a future formula variant, apply
 %   that direct term at the injection sample in addition to the modal tail.
 
-    if nargin < 1 || isempty(n),                 n = 13; end
+    if nargin < 1 || isempty(n),                 n = 12; end
     if nargin < 2 || isempty(fc_hz),             fc_hz = 20000; end
     if nargin < 3 || isempty(Rp),                Rp = 1; end
     if nargin < 4 || isempty(Rs),                Rs = 120; end
     if nargin < 5 || isempty(fs),                fs = 48000; end
-    if nargin < 6 || isempty(dc_block_rad),      dc_block_rad = 400.0; end
+    if nargin < 6 || isempty(dc_block_rad),      dc_block_rad = 100.0; end
     if nargin < 7 || isempty(dc_block_order),    dc_block_order = 2; end
-    if nargin < 8 || isempty(dc_spread_oct),     dc_spread_oct = 1; end
+    if nargin < 8 || isempty(dc_spread_oct),     dc_spread_oct = 5; end
     if nargin < 9 || isempty(response_samples),  response_samples = 500; end
 
     validateattributes(n,                {'numeric'}, {'scalar','integer','positive'});
@@ -71,8 +71,6 @@ function result = stepresiduecoeffsgenerator(n, fc_hz, Rp, Rs, fs, dc_block_rad,
     Hlp = tf(b_lp, a_lp);
     Hhp = tf(b_hp, a_hp);
     Hantidc = tf(b_dc, a_dc);
-    % Alternative explicit high-pass residual:
-    % R = minreal(-Hhp/s*Hantidc, 1e-7);
     R = minreal((Hlp-1)/s*Hantidc, 1e-7);
     [b, a] = tfdata(R, 'v');
     b = trim_leading_zeros(b);
@@ -84,30 +82,20 @@ function result = stepresiduecoeffsgenerator(n, fc_hz, Rp, Rs, fs, dc_block_rad,
     directGain = sum(k_dir);
     h0_modal = real(sum(r_all));
     h0_display = directGain + h0_modal;
-    h0_error_from_minus_one = h0_display + 1;
-    exportResidueNorm = abs(h0_display);
-    if ~isfinite(exportResidueNorm) || exportResidueNorm <= eps
-        error('Cannot normalize exported residues; h(0+) is %.12g %+.12gj.', real(h0_display), imag(h0_display));
-    end
-    directGainExport = directGain / exportResidueNorm;
-    h0_export = h0_display / exportResidueNorm;
-    h0_export_error_from_minus_one = h0_export + 1;
     [p_two, r_two, p_one, r_one] = split_modal_poles(p_all, r_all);
-    r_two_export = r_two / exportResidueNorm;
-    r_one_export = r_one / exportResidueNorm;
 
     twoPoleParams = zeros(numel(p_two) * 4, 1);
     for i = 1:numel(p_two)
         twoPoleParams((i-1)*4 + 1) = real(p_two(i));
         twoPoleParams((i-1)*4 + 2) = imag(p_two(i));
-        twoPoleParams((i-1)*4 + 3) = real(r_two_export(i));
-        twoPoleParams((i-1)*4 + 4) = imag(r_two_export(i));
+        twoPoleParams((i-1)*4 + 3) = real(r_two(i));
+        twoPoleParams((i-1)*4 + 4) = imag(r_two(i));
     end
 
     onePoleParams = zeros(numel(p_one) * 2, 1);
     for i = 1:numel(p_one)
         onePoleParams((i-1)*2 + 1) = p_one(i);
-        onePoleParams((i-1)*2 + 2) = real(r_one_export(i));
+        onePoleParams((i-1)*2 + 2) = real(r_one(i));
     end
 
     t_samples = (0:response_samples-1) / fs;
@@ -143,7 +131,7 @@ function result = stepresiduecoeffsgenerator(n, fc_hz, Rp, Rs, fs, dc_block_rad,
 
     fprintf('====================================================\n');
     fprintf('Step residual modal export\n');
-    fprintf('Formula                   = (Hlp(s) - 1) / s * Hantidc(s)\n');
+    fprintf('Formula                   = -Hhp(s) / s * Hantidc(s)\n');
     fprintf('Elliptic order n          = %d\n', n);
     fprintf('Cutoff fc                 = %.12g Hz\n', fc_hz);
     fprintf('Passband ripple Rp        = %.12g dB\n', Rp);
@@ -159,13 +147,9 @@ function result = stepresiduecoeffsgenerator(n, fc_hz, Rp, Rs, fs, dc_block_rad,
     fprintf('Frequency plot max        = %.12g Hz (10 * Nyquist)\n', 10 * fs / 2);
     fprintf('Frequency plot view       = R(s) - h0 * Hantidc(s) / s, h0 = %.12g\n', h0_modal);
     fprintf('Nyquist suppression       = %.12g dB relative to response peak\n', H_nyquist_db_rel);
-    fprintf('directGain k_dir          = %.12g %+.12gj\n', real(directGain), imag(directGain));
+    fprintf('directGain k_dir          = %.12g\n', directGain);
     fprintf('modal tail h(0+)          = %.12g\n', h0_modal);
-    fprintf('display h[0] direct+tail  = %.12g %+.12gj\n', real(h0_display), imag(h0_display));
-    fprintf('h(0+) - (-1)              = %.12g %+.12gj\n', real(h0_error_from_minus_one), imag(h0_error_from_minus_one));
-    fprintf('C++ residue export norm   = abs(h(0+)) = %.12g\n', exportResidueNorm);
-    fprintf('C++ export h(0+)          = %.12g %+.12gj\n', real(h0_export), imag(h0_export));
-    fprintf('C++ export h(0+) - (-1)   = %.12g %+.12gj\n', real(h0_export_error_from_minus_one), imag(h0_export_error_from_minus_one));
+    fprintf('display h[0] direct+tail  = %.12g\n', h0_display);
     fprintf('integral h(t) dt = H(0)  = %.12g %+.12gj\n', real(area), imag(area));
     fprintf('Two-pole modal count      = %d\n', numel(p_two));
     fprintf('One-pole modal count      = %d\n', numel(p_one));
@@ -174,7 +158,7 @@ function result = stepresiduecoeffsgenerator(n, fc_hz, Rp, Rs, fs, dc_block_rad,
     print_cpp_vector(twoPoleParams, 'twoPoleParams', 4);
     fprintf('\n');
     print_cpp_vector(onePoleParams, 'onePoleParams', 2);
-    fprintf('\nfloat directGain = %.12gf;\n', real(directGainExport));
+    fprintf('\nfloat directGain = %.12gf;\n', directGain);
 
     if any(abs(k_dir) > 1e-9)
         fprintf('\n%% NOTE: residue() returned direct term k_dir:\n');
@@ -223,8 +207,6 @@ function result = stepresiduecoeffsgenerator(n, fc_hz, Rp, Rs, fs, dc_block_rad,
     result.two_residues = r_two;
     result.one_poles_rad = p_one;
     result.one_residues = r_one;
-    result.two_residues_export = r_two_export;
-    result.one_residues_export = r_one_export;
     result.twoPoleParams = twoPoleParams;
     result.onePoleParams = onePoleParams;
     result.dc_block_poles_rad = dc_poles_rad;
@@ -241,13 +223,8 @@ function result = stepresiduecoeffsgenerator(n, fc_hz, Rp, Rs, fs, dc_block_rad,
     result.t_analog = t_analog;
     result.h_analog = h_analog;
     result.directGain = directGain;
-    result.directGainExport = directGainExport;
     result.h0_modal = h0_modal;
     result.h0_display = h0_display;
-    result.h0_error_from_minus_one = h0_error_from_minus_one;
-    result.exportResidueNorm = exportResidueNorm;
-    result.h0_export = h0_export;
-    result.h0_export_error_from_minus_one = h0_export_error_from_minus_one;
     result.area = area;
     result.HhpInf_before = HhpInf_before;
     result.HhpInf = HhpInf;

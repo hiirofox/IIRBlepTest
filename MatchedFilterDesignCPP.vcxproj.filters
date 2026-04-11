@@ -47,5 +47,8 @@
     <ClInclude Include="dsp\SystemModal.h">
       <Filter>头文件</Filter>
     </ClInclude>
+    <ClInclude Include="dsp\IIRModal.h">
+      <Filter>头文件</Filter>
+    </ClInclude>
   </ItemGroup>
 </Project>
