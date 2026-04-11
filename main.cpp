@@ -203,17 +203,15 @@ int main1()
 				float freq = SweepF0 * powf(SweepF1 / SweepF0, u);
 				float incr = freq / SampleRate;
 
-				float prevPhase = phase;
 				phase += incr;
 
 				while (phase >= 1.0f)
 				{
-					float frac = (1.0f - prevPhase) / incr;
+					phase -= (int)phase;
+					float frac = phase / incr;
 					float tau = Clamp(frac, 0.0f, 0.999999f);
-					modal.Add(tau, -1.0f, 1);
+					modal.Add(-1.0f, tau, 1);
 
-					phase -= 1.0f;
-					prevPhase = 0.0f;
 				}
 				float naive = phase - 0.5;
 				modal.Step();
@@ -278,7 +276,7 @@ int main1()
 			out.assign(ResponseSamples, 0.0f);
 			IIRBlep2::IIRBlep modal;
 			modal.Reset();
-			modal.Add(ResponseTau, 1.0f, mode);
+			modal.Add(1.0f, ResponseTau, mode);
 
 			for (int n = 0; n < ResponseSamples; ++n)
 			{

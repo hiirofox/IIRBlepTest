@@ -117,7 +117,7 @@ namespace IIRBlepUtils
 
 		for (int i = 0; i < TableSize; ++i) {
 			const float tau = (float)i / (float)(TableSize - 2);
-			const float dt1 = (1.0f - tau) * IIRBlepCoeffs::Ts;
+			const float dt1 = tau * IIRBlepCoeffs::Ts;
 			const float shiftAbs = expf(pre * dt1);
 			const float shiftArg = pim * dt1;
 			const float shiftRe = shiftAbs * cosf(shiftArg);
@@ -142,7 +142,7 @@ namespace IIRBlepUtils
 
 		for (int i = 0; i < TableSize; ++i) {
 			const float tau = (float)i / (float)(TableSize - 2);
-			const float dt1 = (1.0f - tau) * IIRBlepCoeffs::Ts;
+			const float dt1 = tau * IIRBlepCoeffs::Ts;
 			g1Table[poleIndex][i] = residue * expf(pre * dt1);
 		}
 	}
@@ -254,7 +254,7 @@ namespace IIRBlep2
 			IIRBlepUtils::BuildTables();
 		}
 
-		void Add(float tau, float linear_gain, int mode)
+		void Add(float linear_gain, float tau, int mode = 1)
 		{
 			if (mode < IIRBlepUtils::BLIT_MODE || mode > IIRBlepUtils::BLAMP_MODE) return;
 
