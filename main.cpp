@@ -6,8 +6,8 @@
 
 #include "raylib/src/raylib.h"
 
-#include "dsp/optimizer.h"
 #include "dsp/IIRBlep.h"
+#include "dsp/TableBlep.h"
 
 void fft(float re[], float im[], int N, int inv)
 {
@@ -89,6 +89,7 @@ Color HSVtoRGB(float h, float s, float v)
 	};
 }
 
+template<typename Blep>
 int main1()
 {
 	constexpr int ScreenW = 1800;
@@ -188,7 +189,7 @@ int main1()
 			return HSVtoRGB(h, s, v);
 		};
 
-	auto BuildSweepSignal = [&](IIRBlep2::IIRBlep& modal, std::vector<float>& out)
+	auto BuildSweepSignal = [&](Blep& modal, std::vector<float>& out)
 		{
 			out.assign(SweepSamples, 0.0f);
 			modal.Reset();
@@ -274,7 +275,7 @@ int main1()
 	auto BuildResidualResponse = [&](std::vector<float>& out, int mode)
 		{
 			out.assign(ResponseSamples, 0.0f);
-			IIRBlep2::IIRBlep modal;
+			Blep modal;
 			modal.Reset();
 			modal.Add(1.0f, ResponseTau, mode);
 
@@ -397,7 +398,7 @@ int main1()
 	// 这里直接写入你求得的“4组上半平面极点 + 对应留数”
 	// 注意：不要把共轭负虚部那4组再放进来
 	// ------------------------------------------------------------
-	IIRBlep2::IIRBlep blep;
+	Blep blep;
 
 	std::vector<float> sweepSignal;
 	std::vector<float> specDb;
@@ -432,7 +433,7 @@ int main1()
 		DrawSpectrogram(specDb, specFrames, specBins, plot);
 		DrawResponsePlot(blitResponse, blitPlot, "BLIT residue: Add(0, 1, 0)", SKYBLUE);
 		DrawResponsePlot(blepResponse, blepPlot, "BLEP residue: Add(0, 1, 1)", ORANGE);
-		DrawResponsePlot(blampResponse, blampPlot, "BLAMP residue: Add(0, 1, 2)", LIME);
+		DrawResponsePlot(blampResponse, blampPlot, "BLAMP residue: Add(0, 1, 2)", MAROON);
 
 		DrawText("Sweep Waterfall / STFT (IIRBlep2 Shared Poles + Residue Modes)", 120, 20, 28, RAYWHITE);
 
@@ -470,5 +471,6 @@ int main1()
 
 int main()
 {
-	main1();
+	using Blep = TableBlep;
+	main1<Blep>();
 }

@@ -28,6 +28,14 @@ public:
 	void Add(float amp, float where, int stage = BLEP_MODE);
 	void Step();
 	float Get();
+	void Reset()
+	{
+		for (int i = 0; i < TableBlepCoeffs::wsiz; ++i) {
+			buf[i] = 0.0f;
+		}
+		v = 0.0f;
+		pos = 0;
+	}
 };
 
 class IirDcCompensator
@@ -77,6 +85,11 @@ public:
 	float Get()
 	{
 		return y1 + y2;
+	}
+	void Reset()
+	{
+		y1 = 0.0f;
+		y2 = 0.0f;
 	}
 };
 
@@ -138,6 +151,15 @@ public:
 	{
 		return v - dcc.Get();
 	}
+	void Reset()
+	{
+		z1 = 0;
+		z2 = 0;
+		z3 = 0;
+		z4 = 0;
+		v = 0.0f;
+		dcc.Reset();
+	}
 };
 
 class Lagrange2thBlep
@@ -178,6 +200,13 @@ public:
 	float Get()
 	{
 		return v - dcc.Get();
+	}
+	void Reset()
+	{
+		z1 = 0.0f;
+		z2 = 0.0f;
+		v = 0.0f;
+		dcc.Reset();
 	}
 };
 
@@ -240,5 +269,16 @@ public:
 	float Get()
 	{
 		return v - dcc.Get();
+	}
+	void Reset()
+	{
+		z1 = 0.0f;
+		z2 = 0.0f;
+		z3 = 0.0f;
+		z4 = 0.0f;
+		z5 = 0.0f;
+		z6 = 0.0f;
+		v = 0.0f;
+		dcc.Reset();
 	}
 };

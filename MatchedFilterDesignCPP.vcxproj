@@ -140,6 +140,7 @@ opengl32.lib;%(AdditionalDependencies)</AdditionalDependencies>
     </Link>
   </ItemDefinitionGroup>
   <ItemGroup>
+    <ClCompile Include="dsp\TableBlep.cpp" />
     <ClCompile Include="main.cpp" />
     <ClCompile Include="raylib\src\raudio.c" />
     <ClCompile Include="raylib\src\rcore.c" />
@@ -153,6 +154,7 @@ opengl32.lib;%(AdditionalDependencies)</AdditionalDependencies>
     <ClInclude Include="dsp\optimizer.h" />
     <ClInclude Include="dsp\SystemModal.h" />
     <ClInclude Include="dsp\IIRBlep.h" />
+    <ClInclude Include="dsp\TableBlep.h" />
   </ItemGroup>
   <Import Project="$(VCTargetsPath)\Microsoft.Cpp.targets" />
   <ImportGroup Label="ExtensionTargets">
