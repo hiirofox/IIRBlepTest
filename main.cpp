@@ -212,7 +212,7 @@ int main1()
 				{
 					float frac = (1.0f - prevPhase) / incr;
 					float tau = Clamp(frac, 0.0f, 0.999999f);
-					modal.Add(tau, -1.0f, 1);
+					modal.Add(tau, -1.0f, 0);
 
 					phase -= 1.0f;
 					prevPhase = 0.0f;
@@ -220,7 +220,7 @@ int main1()
 				float naive = phase - 0.5;
 				modal.Step();
 				float residue = modal.Get();
-				out[n] = naive - residue;
+				out[n] = naive + residue;
 			}
 		};
 
@@ -403,21 +403,23 @@ int main1()
 	// ------------------------------------------------------------
 	std::vector<float> twoPoleParams =
 	{
-		-20393.067834f, 22959.7277661f, 3067.58153038f, -25030.4073673f,
-		-17529.7962142f, 65459.850832f, -7132.56204677f, 20104.1271897f,
-		-13121.9368141f, 99423.3520631f, 8778.61074854f, -13052.2446387f,
-		-8620.3942562f, 123201.796764f, -7817.26451764f, 6309.002808f,
-		-4747.224018f, 137664.497606f, 4965.92006838f, -1611.2651103f,
-		-1501.09988595f, 144379.586391f, -1594.11023496f, -38.4144785063f
+		-20393.067834f, 22959.7277661f, -0.758202429761f, 0.523533668049f,
+		-17529.7962142f, 65459.850832f, 0.352086027516f, 0.0279693569025f,
+		-13121.9368141f, 99423.3520631f, -0.157627455437f, -0.0782651720256f,
+		-8620.3942562f, 123201.796764f, 0.0621342615925f, 0.0668455609864f,
+		-4747.224018f, 137664.497606f, -0.0145108841803f, -0.039973759663f,
+		-1501.09988595f, 144379.586391f, -0.000169712311288f, 0.0123900885274f
 	};
 
 	std::vector<float> onePoleParams =
 	{
-		-17.6776695297f, 0.508730255639f,
-		-565.685424949f, -536.873067158f
+		-17.6776695297f, -3.15273970449e-05f,
+		-565.685424949f, 0.0326120247605f
 	};
 
-	std::tuple<float, float> normGain = NormalizationResidues(twoPoleParams, onePoleParams);
+
+	//std::tuple<float, float> normGain = NormalizationResidues(twoPoleParams, onePoleParams);
+	std::tuple<float, float> normGain = std::make_tuple(1.0f, 1.0f);
 
 	SystemModal modal;
 	modal.CalcPoles(twoPoleParams, onePoleParams);

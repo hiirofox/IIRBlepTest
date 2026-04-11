@@ -23,7 +23,7 @@ function result = design_elliptic_modal_normalized(n, fc_hz, Rp, Rs, fs, dc_bloc
     if nargin < 4 || isempty(Rs),             Rs = 140; end
     if nargin < 5 || isempty(fs),             fs = 48000; end
     if nargin < 6 || isempty(dc_block_rad),   dc_block_rad = 100.0; end
-    if nargin < 7 || isempty(dc_block_order),  dc_block_order = 2; end
+    if nargin < 7 || isempty(dc_block_order),  dc_block_order = 0; end
     if nargin < 8 || isempty(dc_spread_oct),  dc_spread_oct = 5; end
 
     validateattributes(n,              {'numeric'}, {'scalar','integer','positive'});

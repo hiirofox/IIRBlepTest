@@ -72,10 +72,6 @@ struct TwoPoleModal
 		z1 += g1;
 		z2 += g2 + a1 * g1;
 	}
-	void InjectStepResidue(float tau, float v)
-	{
-		InjectStep(tau, v);
-	}
 
 	void SetNormGain(float impNormGain, float stepNormGain)
 	{
@@ -148,10 +144,6 @@ struct OnePoleModal
 		float shift = expf(pole * dt1);
 		float g1 = v * residue * shift / pole * stepNormGain;
 		z1 += g1;
-	}
-	void InjectStepResidue(float tau, float v)
-	{
-		InjectStep(tau, v);
 	}
 
 	void SetNormGain(float impNormGain, float stepNormGain)
@@ -238,15 +230,6 @@ public:
 			onePoles[i].InjectStep(tau, v);
 		}
 	}
-	void InjectStepResidue(float tau, float v)
-	{
-		for (int i = 0; i < numTwoPoles; i++) {
-			twoPoles[i].InjectStepResidue(tau, v);
-		}
-		for (int i = 0; i < numOnePoles; i++) {
-			onePoles[i].InjectStepResidue(tau, v);
-		}
-	}
 	float ProcessSample()
 	{
 		float y = 0;
@@ -316,21 +299,17 @@ public:
 	{
 		if (mode == 0)
 		{
-			naiveBlit += v;
 			modal.InjectImpulse(tau, v);
 		}
 		else if (mode == 1)
 		{
-			naiveBlep += v;
 			modal.InjectStep(tau, v);
 		}
 	}
 	void Step()
 	{
 		float y = modal.ProcessSample();
-		v = naiveBlit + naiveBlep - y;
-		naiveBlit = 0;
-		naiveBlep *= 0.999;
+		v = y;
 	}
 	float Get()
 	{
