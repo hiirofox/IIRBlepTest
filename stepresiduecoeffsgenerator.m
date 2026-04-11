@@ -72,8 +72,8 @@ function result = stepresiduecoeffsgenerator(n, fc_hz, Rp, Rs, fs, dc_block_rad,
     Hhp = tf(b_hp, a_hp);
     Hantidc = tf(b_dc, a_dc);
     % Alternative explicit high-pass residual:
-    % R = minreal(-Hhp/s*Hantidc, 1e-7);
-    R = minreal((Hlp-1)/s*Hantidc, 1e-7);
+    %R = minreal((Hlp-1)/s*Hantidc, 1e-7);
+    R = minreal((Hlp-1)/(s)*Hantidc, 1e-7);
     [b, a] = tfdata(R, 'v');
     b = trim_leading_zeros(b);
     a = trim_leading_zeros(a);
@@ -87,7 +87,8 @@ function result = stepresiduecoeffsgenerator(n, fc_hz, Rp, Rs, fs, dc_block_rad,
     h0_error_from_minus_one = h0_display + 1;
     exportResidueNorm = abs(h0_display);
     if ~isfinite(exportResidueNorm) || exportResidueNorm <= eps
-        error('Cannot normalize exported residues; h(0+) is %.12g %+.12gj.', real(h0_display), imag(h0_display));
+        %error('Cannot normalize exported residues; h(0+) is %.12g %+.12gj.', real(h0_display), imag(h0_display));
+        exportResidueNorm = 1.0;
     end
     directGainExport = directGain / exportResidueNorm;
     h0_export = h0_display / exportResidueNorm;

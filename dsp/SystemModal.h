@@ -77,7 +77,7 @@ struct TwoPoleModal
 	}
 	*/
 	//void InjectImpulse(float tau, float v)
-	void InjectImpulse(int index1, float frac, float v)
+	inline void InjectImpulse(int index1, float frac, float v)
 	{
 		//if (tau < 0.0f) tau = 0.0f;
 		//if (tau >= 1.0f) tau = 1.0f;
@@ -166,7 +166,7 @@ struct OnePoleModal
 		z1 += g1;
 	}*/
 	//void InjectImpulse(float tau, float v)
-	void InjectImpulse(int index1, float frac, float v)
+	inline void InjectImpulse(int index1, float frac, float v)
 	{
 		//if (tau < 0.0f) tau = 0.0f;
 		//if (tau >= 1.0f) tau = 1.0f;
@@ -344,7 +344,58 @@ public:
 	}
 	void Add(float tau, float v, int mode)
 	{
-		modal.InjectImpulse(tau, v);
+		if (mode == 1) modal.InjectImpulse(tau, v);
+	}
+	void Step()
+	{
+		v = modal.ProcessSample();
+	}
+	float Get()
+	{
+		return v;
+	}
+	void Reset()
+	{
+		modal.Reset();
+		v = 0;
+	}
+};
+
+
+class IIRBlamp
+{
+private:
+	SystemModal modal;
+	float v = 0;
+
+	std::vector<float> twoPoleParams =
+	{
+		-22499.526025f, 25498.4629188f, 1.24922671663f, 0.323786880665f,
+		-18558.7771212f, 71663.4117229f, -0.0336388822132f, -0.217867697197f,
+		-12980.5407875f, 106472.913933f, -0.0265170714616f, 0.0673542084176f,
+		-7916.79591168f, 129087.105763f, 0.0214771546503f, -0.0203039281966f,
+		-4096.74776281f, 141896.234098f, -0.011442204851f, 0.00361262215595f,
+		-1250.24954596f, 147548.854296f, 0.00326623120452f, 0.000307924503661f
+	};
+
+	std::vector<float> onePoleParams =
+	{
+		-282.842712475f, 2.38281197241f,
+		-565.685424949f, -4.78755586032f
+	};
+public:
+	IIRBlamp()
+	{
+		Setup(twoPoleParams, onePoleParams, 1.0f, 1.0f);
+	}
+	void Setup(const std::vector<float>& twoPoleParams, const std::vector<float>& onePoleParams, float impNormGain, float stepNormGain)
+	{
+		modal.CalcPoles(twoPoleParams, onePoleParams);
+		modal.SetNormGain(impNormGain, stepNormGain);
+	}
+	void Add(float tau, float v, int mode)
+	{
+		if (mode == 2) modal.InjectImpulse(tau, v);
 	}
 	void Step()
 	{
