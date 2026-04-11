@@ -2,10 +2,11 @@ function result = stepresiduecoeffsgenerator(n, fc_hz, Rp, Rs, fs, dc_block_rad,
 % Analog step-residual modal export for direct InjectImpulse() playback.
 %
 % Transfer function:
-%   R(s) = (Hlp(s) / s - 1) * Hantidc(s)
+%   R(s) = -Hhp(s) / s * Hantidc(s)
 %
 % Defaults:
 %   Hlp      : 12th-order analog elliptic low-pass, DC-normalized to Hlp(0)=1
+%   Hhp      : 12th-order analog elliptic high-pass, normalized to Hhp(inf)=1
 %   Hantidc : 2nd-order DC blocker, prod_k s / (s + wd_k)
 %
 % Export format:
@@ -14,11 +15,11 @@ function result = stepresiduecoeffsgenerator(n, fc_hz, Rp, Rs, fs, dc_block_rad,
 %
 % Intended C++ use:
 %   feed the exported residues to InjectImpulse() to generate the step residual.
-%   This exact formula includes a direct term k_dir from the "-1" part. Apply
+%   If residue() returns a direct term k_dir for a future formula variant, apply
 %   that direct term at the injection sample in addition to the modal tail.
 
     if nargin < 1 || isempty(n),                 n = 12; end
-    if nargin < 2 || isempty(fc_hz),             fc_hz = 23000; end
+    if nargin < 2 || isempty(fc_hz),             fc_hz = 22000; end
     if nargin < 3 || isempty(Rp),                Rp = 1; end
     if nargin < 4 || isempty(Rs),                Rs = 140; end
     if nargin < 5 || isempty(fs),                fs = 48000; end
@@ -47,10 +48,19 @@ function result = stepresiduecoeffsgenerator(n, fc_hz, Rp, Rs, fs, dc_block_rad,
     [z, p0, k0] = ellipap(n, Rp, Rs);
     [b0, a0] = zp2tf(z, p0, k0);
     [b_lp, a_lp] = lp2lp(b0, a0, wc);
+    [b_hp, a_hp] = lp2hp(b0, a0, wc);
 
     Hlp0_before = polyval(b_lp, 0) / polyval(a_lp, 0);
     b_lp = b_lp / Hlp0_before;
     Hlp0 = polyval(b_lp, 0) / polyval(a_lp, 0);
+
+    HhpInf_before = high_frequency_gain(b_hp, a_hp);
+    if ~isfinite(HhpInf_before) || abs(HhpInf_before) <= eps
+        error('Cannot normalize Hhp(inf); high-frequency gain is %.12g %+.12gj.', real(HhpInf_before), imag(HhpInf_before));
+    end
+    b_hp = b_hp / HhpInf_before;
+    HhpInf = high_frequency_gain(b_hp, a_hp);
+    Hhp0 = polyval(b_hp, 0) / polyval(a_hp, 0);
 
     dc_poles_rad = build_dc_poles(dc_block_rad, dc_block_order, dc_spread_oct);
     [b_dc, a_dc] = make_dc_blocker(dc_poles_rad);
@@ -59,8 +69,9 @@ function result = stepresiduecoeffsgenerator(n, fc_hz, Rp, Rs, fs, dc_block_rad,
     % the same form as the design idea so the sign and the direct term are clear.
     s = tf('s');
     Hlp = tf(b_lp, a_lp);
+    Hhp = tf(b_hp, a_hp);
     Hantidc = tf(b_dc, a_dc);
-    R = minreal((Hlp/s-1/s)*Hantidc, 1e-7);
+    R = minreal((Hlp-1)/s*Hantidc, 1e-7);
     [b, a] = tfdata(R, 'v');
     b = trim_leading_zeros(b);
     a = trim_leading_zeros(a);
@@ -96,26 +107,45 @@ function result = stepresiduecoeffsgenerator(n, fc_hz, Rp, Rs, fs, dc_block_rad,
 
     f_hz = unique([0, logspace(-3, log10(max(10 * fs / 2, fc_hz * 2)), 16384)]);
     H = freqs(b, a, 2*pi*f_hz);
-    H_abs = abs(H);
-    H_peak = max(H_abs(2:end));
+    H = H(:).';
+
+    % Plot-only zero-initial view. The exported residual R intentionally has
+    % a nonzero 0+ value; that dominates the residual spectrum as a -1/s-like
+    % tail. For inspection, subtract that initial value through the same
+    % anti-DC step path, so the plotted response starts at 0+.
+    H_plot = NaN(size(H));
+    positive_freq_mask = f_hz > 0;
+    s_plot = 1i * 2*pi*f_hz(positive_freq_mask);
+    Hantidc_plot = freqs(b_dc, a_dc, 2*pi*f_hz(positive_freq_mask));
+    Hantidc_plot = Hantidc_plot(:).';
+    H_plot(positive_freq_mask) = H(positive_freq_mask) - h0_modal * Hantidc_plot ./ s_plot;
+    H_abs = abs(H_plot);
+    H_peak = max(H_abs(positive_freq_mask));
     H_db_rel = 20*log10(max(H_abs / H_peak, 1e-300));
     H_nyquist = freqs(b, a, [2*pi*(fs/2), 2*pi*(fs/2)]);
     H_nyquist = H_nyquist(1);
-    H_nyquist_db_rel = 20*log10(max(abs(H_nyquist) / H_peak, 1e-300));
+    Hantidc_nyquist = freqs(b_dc, a_dc, [2*pi*(fs/2), 2*pi*(fs/2)]);
+    Hantidc_nyquist = Hantidc_nyquist(1);
+    H_nyquist_plot = H_nyquist - h0_modal * Hantidc_nyquist / (1i * 2*pi*(fs/2));
+    H_nyquist_db_rel = 20*log10(max(abs(H_nyquist_plot) / H_peak, 1e-300));
 
     fprintf('====================================================\n');
     fprintf('Step residual modal export\n');
-    fprintf('Formula                   = (Hlp(s) / s - 1) * Hantidc(s)\n');
+    fprintf('Formula                   = -Hhp(s) / s * Hantidc(s)\n');
     fprintf('Elliptic order n          = %d\n', n);
     fprintf('Cutoff fc                 = %.12g Hz\n', fc_hz);
     fprintf('Passband ripple Rp        = %.12g dB\n', Rp);
     fprintf('Stopband attenuation Rs   = %.12g dB\n', Rs);
     fprintf('Hlp(0) before normalize   = %.12g %+.12gj\n', real(Hlp0_before), imag(Hlp0_before));
     fprintf('Hlp(0) after normalize    = %.12g %+.12gj\n', real(Hlp0), imag(Hlp0));
+    fprintf('Hhp(inf) before normalize = %.12g %+.12gj\n', real(HhpInf_before), imag(HhpInf_before));
+    fprintf('Hhp(inf) after normalize  = %.12g %+.12gj\n', real(HhpInf), imag(HhpInf));
+    fprintf('Hhp(0)                    = %.12g %+.12gj\n', real(Hhp0), imag(Hhp0));
     fprintf('DC blocker poles (rad/s)  = ');
     fprintf('%.12g ', dc_poles_rad);
     fprintf('\n');
     fprintf('Frequency plot max        = %.12g Hz (10 * Nyquist)\n', 10 * fs / 2);
+    fprintf('Frequency plot view       = R(s) - h0 * Hantidc(s) / s, h0 = %.12g\n', h0_modal);
     fprintf('Nyquist suppression       = %.12g dB relative to response peak\n', H_nyquist_db_rel);
     fprintf('directGain k_dir          = %.12g\n', directGain);
     fprintf('modal tail h(0+)          = %.12g\n', h0_modal);
@@ -146,7 +176,7 @@ function result = stepresiduecoeffsgenerator(n, fc_hz, Rp, Rs, fs, dc_block_rad,
     grid on;
     xlabel('Frequency (Hz)');
     ylabel('Magnitude (dB, peak-normalized)');
-    title(sprintf('Analog frequency response: (Hlp / s - 1) * Hantidc, Nyquist = %.2f dB', H_nyquist_db_rel));
+    title(sprintf('Zero-initial plot: R - h0 * Hantidc / s, Nyquist = %.2f dB', H_nyquist_db_rel));
     xlim([f_hz(2), f_hz(end)]);
 
     subplot(2, 1, 2);
@@ -166,6 +196,8 @@ function result = stepresiduecoeffsgenerator(n, fc_hz, Rp, Rs, fs, dc_block_rad,
     result.a = a;
     result.b_lp = b_lp;
     result.a_lp = a_lp;
+    result.b_hp = b_hp;
+    result.a_hp = a_hp;
     result.b_dc = b_dc;
     result.a_dc = a_dc;
     result.poles_all_rad = p_all;
@@ -180,9 +212,11 @@ function result = stepresiduecoeffsgenerator(n, fc_hz, Rp, Rs, fs, dc_block_rad,
     result.dc_block_poles_rad = dc_poles_rad;
     result.f_hz = f_hz;
     result.H = H;
+    result.H_plot = H_plot;
     result.H_db_rel = H_db_rel;
     result.H_peak = H_peak;
     result.H_nyquist = H_nyquist;
+    result.H_nyquist_plot = H_nyquist_plot;
     result.H_nyquist_db_rel = H_nyquist_db_rel;
     result.t_samples = t_samples;
     result.h_samples = h_samples;
@@ -192,6 +226,9 @@ function result = stepresiduecoeffsgenerator(n, fc_hz, Rp, Rs, fs, dc_block_rad,
     result.h0_modal = h0_modal;
     result.h0_display = h0_display;
     result.area = area;
+    result.HhpInf_before = HhpInf_before;
+    result.HhpInf = HhpInf;
+    result.Hhp0 = Hhp0;
 end
 
 function [b_dc, a_dc] = make_dc_blocker(dc_poles_rad)
@@ -300,6 +337,21 @@ function h0 = initial_value(b, a)
         h0 = 0;
     else
         h0 = Inf;
+    end
+end
+
+function gain = high_frequency_gain(b, a)
+    b = trim_leading_zeros(b);
+    a = trim_leading_zeros(a);
+    deg_b = numel(b) - 1;
+    deg_a = numel(a) - 1;
+
+    if deg_b == deg_a
+        gain = b(1) / a(1);
+    elseif deg_b < deg_a
+        gain = 0;
+    else
+        gain = Inf;
     end
 end
 
