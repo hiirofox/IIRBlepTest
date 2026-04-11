@@ -55,8 +55,10 @@ struct TwoPoleModal
 			std::complex<float> shift = std::exp(pole * dt1);
 			std::complex<float> A1 = residue * shift;
 			std::complex<float> A2 = A1 * step1;
-			g1Table[i] = 2.0f * A1.real() * impNormGain;
-			g2Table[i] = 2.0f * A2.real() * impNormGain;
+			float g1 = 2.0f * A1.real() * impNormGain;
+			float g2 = 2.0f * A2.real() * impNormGain;
+			g1Table[i] = g1;
+			g2Table[i] = g2 + a1 * g1;
 		}
 	}
 	/*
@@ -74,19 +76,19 @@ struct TwoPoleModal
 		z2 += g2 + a1 * g1;
 	}
 	*/
-	void InjectImpulse(float tau, float v)
+	//void InjectImpulse(float tau, float v)
+	void InjectImpulse(int index1, float frac, float v)
 	{
-		if (tau < 0.0f) tau = 0.0f;
-		if (tau >= 1.0f) tau = 1.0f;
-		int index1 = tau * (TableSize - 2);
+		//if (tau < 0.0f) tau = 0.0f;
+		//if (tau >= 1.0f) tau = 1.0f;
+		//float fpos = tau * (TableSize - 2);
+		//int index1 = fpos;
 		int index2 = index1 + 1;
-		float frac = tau * (TableSize - 2) - index1;
+		//float frac = fpos - index1;
 		float g1 = frac * (g1Table[index2] - g1Table[index1]) + g1Table[index1];
 		float g2 = frac * (g2Table[index2] - g2Table[index1]) + g2Table[index1];
-		g1 *= v;
-		g2 *= v;
-		z1 += g1;
-		z2 += g2 + a1 * g1;
+		z1 += g1 * v;
+		z2 += g2 * v;
 	}
 
 	void SetNormGain(float impNormGain, float stepNormGain)
@@ -114,7 +116,7 @@ struct OnePoleModal
 	float pole = 0;
 	float residue = 0;
 	float step1 = 1;
-	constexpr static int TableSize = 32;
+	constexpr static int TableSize = TwoPoleModal::TableSize;
 	float g1Table[TableSize];
 
 	float impNormGain = 1.0f;
@@ -163,16 +165,17 @@ struct OnePoleModal
 		float g1 = v * residue * shift * impNormGain;
 		z1 += g1;
 	}*/
-	void InjectImpulse(float tau, float v)
+	//void InjectImpulse(float tau, float v)
+	void InjectImpulse(int index1, float frac, float v)
 	{
-		if (tau < 0.0f) tau = 0.0f;
-		if (tau >= 1.0f) tau = 1.0f;
-		int index1 = tau * (TableSize - 2);
+		//if (tau < 0.0f) tau = 0.0f;
+		//if (tau >= 1.0f) tau = 1.0f;
+		//float fpos = tau * (TableSize - 2);
+		//int index1 = fpos;
 		int index2 = index1 + 1;
-		float frac = tau * (TableSize - 2) - index1;
+		//float frac = fpos - index1;
 		float g1 = frac * (g1Table[index2] - g1Table[index1]) + g1Table[index1];
-		g1 *= v;
-		z1 += g1;
+		z1 += g1 * v;
 	}
 
 	void SetNormGain(float impNormGain, float stepNormGain)
@@ -191,6 +194,7 @@ class SystemModal
 {
 public:
 	constexpr static float Ts = 1.0f / 48000.0f;
+	constexpr static int TableSize = TwoPoleModal::TableSize;
 private:
 	std::vector<TwoPoleModal> twoPoles;
 	std::vector<OnePoleModal> onePoles;
@@ -201,7 +205,7 @@ private:
 	float dcPolePre = 0;
 	float dcPoleResidue = 0;
 public:
-	void CalcPoles(std::vector<float>& twoPoleParams, std::vector<float>& onePoleParams)
+	void CalcPoles(const std::vector<float>& twoPoleParams, const std::vector<float>& onePoleParams)
 	{
 		this->twoPoleParams = twoPoleParams;
 		this->onePoleParams = onePoleParams;
@@ -243,11 +247,17 @@ public:
 	}
 	void InjectImpulse(float tau, float v)
 	{
+		if (tau < 0.0f) tau = 0.0f;
+		if (tau >= 1.0f) tau = 1.0f;
+		float fpos = tau * (TableSize - 2);
+		int index1 = fpos;
+		float frac = fpos - index1;
+
 		for (int i = 0; i < numTwoPoles; i++) {
-			twoPoles[i].InjectImpulse(tau, v);
+			twoPoles[i].InjectImpulse(index1, frac, v);
 		}
 		for (int i = 0; i < numOnePoles; i++) {
-			onePoles[i].InjectImpulse(tau, v);
+			onePoles[i].InjectImpulse(index1, frac, v);
 		}
 	}
 	float ProcessSample()
@@ -307,8 +317,27 @@ class IIRBlep
 private:
 	SystemModal modal;
 	float v = 0;
+
+	const std::vector<float> twoPoleParams =
+	{
+		-22499.526025f, 25498.4629188f, -0.757564099837f, 0.511839786731f,
+		-18558.7771212f, 71663.4117229f, 0.338279979228f, 0.0340141868387f,
+		-12980.5407875f, 106472.913933f, -0.142233185588f, -0.0770342482721f,
+		-7916.79591168f, 129087.105763f, 0.0510613557583f, 0.0611076206161f,
+		-4096.74776281f, 141896.234098f, -0.00970295108387f, -0.0341334537474f,
+		-1250.24954596f, 147548.854296f, -0.00103161482926f, 0.0100321602005f
+	};
+	const std::vector<float> onePoleParams =
+	{
+		-282.842712475f, -0.0140408541999f,
+		-565.685424949f, 0.0564218869024f
+	};
 public:
-	void Setup(std::vector<float>& twoPoleParams, std::vector<float>& onePoleParams, float impNormGain, float stepNormGain)
+	IIRBlep()
+	{
+		Setup(twoPoleParams, onePoleParams, 1.0f, 1.0f);
+	}
+	void Setup(const std::vector<float>& twoPoleParams, const std::vector<float>& onePoleParams, float impNormGain, float stepNormGain)
 	{
 		modal.CalcPoles(twoPoleParams, onePoleParams);
 		modal.SetNormGain(impNormGain, stepNormGain);

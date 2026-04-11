@@ -18,8 +18,8 @@ function result = stepresiduecoeffsgenerator(n, fc_hz, Rp, Rs, fs, dc_block_rad,
 %   If residue() returns a direct term k_dir for a future formula variant, apply
 %   that direct term at the injection sample in addition to the modal tail.
 
-    if nargin < 1 || isempty(n),                 n = 13; end
-    if nargin < 2 || isempty(fc_hz),             fc_hz = 20000; end
+    if nargin < 1 || isempty(n),                 n = 12; end
+    if nargin < 2 || isempty(fc_hz),             fc_hz = 23500; end
     if nargin < 3 || isempty(Rp),                Rp = 1; end
     if nargin < 4 || isempty(Rs),                Rs = 120; end
     if nargin < 5 || isempty(fs),                fs = 48000; end

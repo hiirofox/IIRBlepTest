@@ -98,17 +98,17 @@ int main1()
 	constexpr float SampleRate = 48000.0f;
 
 	// ---- Sweep / STFT 参数 ----
-	constexpr float SweepDurSec = 6.0f;
+	constexpr float SweepDurSec = 20.0f;
 	constexpr int SweepSamples = (int)(SweepDurSec * SampleRate);
-	constexpr float SweepF0 = 24.0f;
+	constexpr float SweepF0 = 1.0f;
 	constexpr float SweepF1 = 24000.0f;
 	constexpr int ResponseSamples = 200;
 	constexpr float ResponseTau = 0.0f;
 
-	constexpr int STFTSize = 512;
+	constexpr int STFTSize = 1024;
 	int hopSize = 32;
-	constexpr float DbMin = -60.0f;
-	constexpr float DbMax = 30.0;
+	constexpr float DbMin = -30.0f;
+	constexpr float DbMax = 10.0;
 
 	InitWindow(ScreenW, ScreenH, "SystemModal Sweep Spectrogram");
 	SetTargetFPS(60);
@@ -406,21 +406,19 @@ int main1()
 	// ------------------------------------------------------------
 	std::vector<float> twoPoleParams =
 	{
-		-17369.8222025f, 41296.5088501f, 0.0775623680069f, 0.467674834767f,
-		-13174.6300177f, 75337.5689417f, 0.0600002324015f, -0.199396063369f,
-		-8670.72738802f, 99191.9596323f, -0.0629706424827f, 0.0824839341265f,
-		-5088.32498887f, 113947.703077f, 0.0441163021251f, -0.0270211133762f,
-		-2577.05740737f, 122067.393825f, -0.0229288079828f, 0.00307104961878f,
-		-779.095029875f, 125598.468182f, 0.00638311156081f, 0.0015987212347f
+		-22499.526025f, 25498.4629188f, -0.757564099837f, 0.511839786731f,
+		-18558.7771212f, 71663.4117229f, 0.338279979228f, 0.0340141868387f,
+		-12980.5407875f, 106472.913933f, -0.142233185588f, -0.0770342482721f,
+		-7916.79591168f, 129087.105763f, 0.0510613557583f, 0.0611076206161f,
+		-4096.74776281f, 141896.234098f, -0.00970295108387f, -0.0341334537474f,
+		-1250.24954596f, 147548.854296f, -0.00103161482926f, 0.0100321602005f
 	};
 
 	std::vector<float> onePoleParams =
 	{
-		-282.842712475f, -0.0220787511791f,
-		-565.685424949f, 0.0895453797956f,
-		-19152.4784287f, -1.27179175587f
+		-282.842712475f, -0.0140408541999f,
+		-565.685424949f, 0.0564218869024f
 	};
-
 
 	//std::tuple<float, float> normGain = NormalizationResidues(twoPoleParams, onePoleParams);
 	std::tuple<float, float> normGain = std::make_tuple(1.0f, 1.0f);
