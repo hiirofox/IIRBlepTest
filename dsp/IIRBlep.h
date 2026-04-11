@@ -116,7 +116,7 @@ namespace IIRBlepUtils
 		const float stepIm = R * sinf(O);
 
 		for (int i = 0; i < TableSize; ++i) {
-			const float tau = (float)i / (float)(TableSize - 2);
+			const float tau = (float)i / (float)(TableSize - 1);
 			const float dt1 = tau * IIRBlepCoeffs::Ts;
 			const float shiftAbs = expf(pre * dt1);
 			const float shiftArg = pim * dt1;
@@ -141,7 +141,7 @@ namespace IIRBlepUtils
 		const float residue = residues[poleIndex];
 
 		for (int i = 0; i < TableSize; ++i) {
-			const float tau = (float)i / (float)(TableSize - 2);
+			const float tau = (float)i / (float)(TableSize - 1);
 			const float dt1 = tau * IIRBlepCoeffs::Ts;
 			g1Table[poleIndex][i] = residue * expf(pre * dt1);
 		}
@@ -259,9 +259,9 @@ namespace IIRBlep2
 			if (mode < IIRBlepUtils::BLIT_MODE || mode > IIRBlepUtils::BLAMP_MODE) return;
 
 			if (tau < 0.0f) tau = 0.0f;
-			if (tau >= 1.0f) tau = 1.0f;
+			if (tau >= 1.0f) tau = 0.999999999999f;
 
-			const float fpos = tau * (float)(IIRBlepUtils::TableSize - 2);
+			const float fpos = tau * (float)(IIRBlepUtils::TableSize - 1);
 			const int index1 = (int)fpos;
 			const int index2 = index1 + 1;
 			const float frac = fpos - (float)index1;
