@@ -494,8 +494,8 @@ int main1()
 
 				char txt[32];
 				sprintf(txt, "%.0fs", t);
-				Vector2 m = MeasureLabel(txt, 14.0f);
-				DrawLabel(txt, x - m.x * 0.5f, rc.y + rc.height + 8.0f, 14.0f, TextMuted);
+				Vector2 m = MeasureLabel(txt, 19.0f);
+				DrawLabel(txt, x - m.x * 0.5f, rc.y + rc.height + 8.0f, 19.0f, TextMuted);
 			}
 
 			const float freqMarks[] = { 0, 4000, 8000, 12000, 16000, 20000, 24000 };
@@ -507,7 +507,7 @@ int main1()
 				char txt[32];
 				if (f >= 1000.0f) sprintf(txt, "%.0fk", f / 1000.0f);
 				else sprintf(txt, "%.0f", f);
-				DrawRightLabel(txt, rc.x - 10.0f, y - 7.0f, 14.0f, TextMuted);
+				DrawRightLabel(txt, rc.x - 12.0f, y - 10.0f, 19.0f, TextMuted);
 			}
 		};
 
@@ -522,19 +522,19 @@ int main1()
 
 			DrawRectangleLinesEx(rc, 1.0f, PlotBorder);
 			char txt[32];
-			DrawLabel("dB", rc.x, rc.y - 22.0f, 14.0f, TextMuted);
+			DrawLabel("dB", rc.x, rc.y - 27.0f, 19.0f, TextMuted);
 			sprintf(txt, "%.0f", DbMax);
-			DrawLabel(txt, rc.x + rc.width + 8.0f, rc.y - 4.0f, 14.0f, TextMuted);
+			DrawLabel(txt, rc.x + rc.width + 8.0f, rc.y - 7.0f, 19.0f, TextMuted);
 			sprintf(txt, "%.0f", DbMin);
-			DrawLabel(txt, rc.x + rc.width + 8.0f, rc.y + rc.height - 12.0f, 14.0f, TextMuted);
+			DrawLabel(txt, rc.x + rc.width + 8.0f, rc.y + rc.height - 15.0f, 19.0f, TextMuted);
 		};
 
 	auto DrawResponsePlot = [&](const std::vector<float>& signal, const Rectangle& rc,
 		const char* title, const char* subtitle, Color lineColor)
 		{
 			DrawRectangleLinesEx(rc, 1.0f, PlotBorder);
-			DrawLabel(title, rc.x, rc.y - 24.0f, 18.0f, TextMain);
-			DrawLabel(subtitle, rc.x + 128.0f, rc.y - 22.0f, 14.0f, TextMuted);
+			DrawLabel(title, rc.x, rc.y - 32.0f, 23.0f, TextMain);
+			DrawLabel(subtitle, rc.x + 160.0f, rc.y - 28.0f, 18.0f, TextMuted);
 
 			if (signal.empty()) return;
 
@@ -545,7 +545,7 @@ int main1()
 
 			char peakText[64];
 			sprintf(peakText, "peak %.4g", maxAbs);
-			DrawRightLabel(peakText, rc.x + rc.width, rc.y - 22.0f, 14.0f, TextMuted);
+			DrawRightLabel(peakText, rc.x + rc.width, rc.y - 28.0f, 18.0f, TextMuted);
 
 			const float viewAbs = 2.0f;
 			const float yScale = rc.height * 0.5f / viewAbs;
@@ -559,8 +559,8 @@ int main1()
 
 				char txt[32];
 				sprintf(txt, "%d", (int)roundf(t * (ResponseSamples - 1)));
-				Vector2 m = MeasureLabel(txt, 12.0f);
-				DrawLabel(txt, x - m.x * 0.5f, rc.y + rc.height + 4.0f, 12.0f, TextMuted);
+				Vector2 m = MeasureLabel(txt, 17.0f);
+				DrawLabel(txt, x - m.x * 0.5f, rc.y + rc.height + 5.0f, 17.0f, TextMuted);
 			}
 
 			for (int i = -2; i <= 2; ++i)
@@ -574,7 +574,7 @@ int main1()
 					char txt[16];
 					if (i == 0) sprintf(txt, "0");
 					else sprintf(txt, "%+d", i);
-					DrawRightLabel(txt, rc.x - 8.0f, y - 7.0f, 12.0f, TextMuted);
+					DrawRightLabel(txt, rc.x - 9.0f, y - 9.0f, 17.0f, TextMuted);
 				}
 			}
 
@@ -613,15 +613,15 @@ int main1()
 	int specFrames = 0;
 	int specBins = 0;
 
-	const float pageMargin = 40.0f;
-	const float top = 90.0f;
-	const float bottom = 58.0f;
-	const float gap = 48.0f;
+	const float pageMargin = 44.0f;
+	const float top = 104.0f;
+	const float bottom = 62.0f;
+	const float gap = 58.0f;
 	const float contentH = (float)ScreenH - top - bottom;
 	const float responseW = 520.0f;
 	const float responseH = (contentH - gap * 2.0f) / 3.0f;
 	const float responseX = (float)ScreenW - pageMargin - responseW;
-	const float sweepX = pageMargin + 56.0f;
+	const float sweepX = pageMargin + 68.0f;
 	Rectangle sweepPlot = {
 		sweepX,
 		top,
@@ -661,9 +661,9 @@ int main1()
 		BeginDrawing();
 		ClearBackground(Bg);
 
-		DrawLabel("Sweep Waterfall / STFT", sweepPlot.x, 26.0f, 24.0f, TextMain);
-		DrawLabel("BLIT / BLEP / BLAMP Residual Responses", responseX, 26.0f, 20.0f, TextMain);
-		DrawLabel("log sweep validation, single-frame raylib plots", sweepPlot.x, 56.0f, 15.0f, TextMuted);
+		DrawLabel("Sweep Waterfall / STFT", sweepPlot.x, 22.0f, 32.0f, TextMain);
+		DrawLabel("BLIT / BLEP / BLAMP Residual Responses", responseX, 24.0f, 27.0f, TextMain);
+		DrawLabel("log sweep validation, single-frame raylib plots", sweepPlot.x, 62.0f, 20.0f, TextMuted);
 
 		DrawSpectrogram(specDb, specFrames, specBins, sweepPlot);
 		DrawSpecGrid(sweepPlot, SweepDurSec);
@@ -677,7 +677,7 @@ int main1()
 		sprintf(info,
 			"Sweep %.0f Hz -> %.0f Hz / %.1f s   STFT %d   Hop %d   Keys: [1]32 [2]64 [3]128 [4]256",
 			SweepF0, SweepF1, SweepDurSec, STFTSize, hopSize);
-		DrawLabel(info, pageMargin, ScreenH - 26.0f, 15.0f, TextMuted);
+		DrawLabel(info, pageMargin, ScreenH - 31.0f, 20.0f, TextMuted);
 
 		EndDrawing();
 	}
@@ -726,13 +726,29 @@ int main2()
 	const Color grid = Color{ 128, 128, 134, 255 };
 	const Color text = Color{ 238, 238, 242, 255 };
 	const Color muted = Color{ 178, 178, 188, 255 };
-	const Color bars[] = {
+	std::vector<Color> resultColors = {
 		Color{ 91, 194, 255, 255 },
 		Color{ 255, 145, 82, 255 },
 		Color{ 255, 216, 93, 255 },
 		Color{ 142, 217, 135, 255 },
 		Color{ 218, 130, 255, 255 },
 	};
+
+	std::vector<int> aliasOrder(results.size());
+	std::vector<int> timeOrder(results.size());
+	for (int i = 0; i < (int)results.size(); ++i)
+	{
+		aliasOrder[i] = i;
+		timeOrder[i] = i;
+	}
+	std::sort(aliasOrder.begin(), aliasOrder.end(), [&](int a, int b)
+		{
+			return results[a].aliasSuppressionDb > results[b].aliasSuppressionDb;
+		});
+	std::sort(timeOrder.begin(), timeOrder.end(), [&](int a, int b)
+		{
+			return results[a].generationMs < results[b].generationMs;
+		});
 
 	auto DrawLabel = [&](const char* label, float x, float y, float size, Color color)
 		{
@@ -750,18 +766,7 @@ int main2()
 			DrawLabel(label, rightX - m.x, y, size, color);
 		};
 
-	auto NiceCeil = [](float x) -> float
-		{
-			if (x <= 0.0f) return 1.0f;
-			const float base = powf(10.0f, floorf(log10f(x)));
-			const float n = x / base;
-			if (n <= 1.0f) return 1.0f * base;
-			if (n <= 2.0f) return 2.0f * base;
-			if (n <= 5.0f) return 5.0f * base;
-			return 10.0f * base;
-		};
-
-	auto DrawBarChart = [&](const Rectangle& rc, const char* title, const char* unit, bool useAliasDb)
+	auto DrawBarChart = [&](const Rectangle& rc, const char* title, const char* unit, bool useAliasDb, const std::vector<int>& order)
 		{
 			float maxValue = 0.0f;
 			for (const BlepEvalResult& r : results)
@@ -769,9 +774,9 @@ int main2()
 				const float v = useAliasDb ? r.aliasSuppressionDb : r.generationMs;
 				maxValue = std::max(maxValue, v);
 			}
-			maxValue = NiceCeil(maxValue * 1.08f);
+			maxValue = maxValue > 0.0f ? maxValue / 0.8f : 1.0f;
 
-			DrawLabel(title, rc.x, rc.y - 34.0f, 24.0f, text);
+			DrawLabel(title, rc.x, rc.y - 42.0f, 30.0f, text);
 			DrawRectangleLinesEx(rc, 1.0f, border);
 
 			for (int i = 0; i <= 5; ++i)
@@ -783,22 +788,23 @@ int main2()
 
 				char label[64];
 				sprintf(label, "%.3g %s", value, unit);
-				DrawRightLabel(label, rc.x - 10.0f, y - 8.0f, 14.0f, muted);
+				DrawRightLabel(label, rc.x - 12.0f, y - 11.0f, 19.0f, muted);
 			}
 
-			const int count = (int)results.size();
+			const int count = (int)order.size();
 			const float cellW = rc.width / (float)count;
 			const float barW = std::min(110.0f, cellW * 0.45f);
 
 			for (int i = 0; i < count; ++i)
 			{
-				const BlepEvalResult& r = results[i];
+				const int resultIndex = order[i];
+				const BlepEvalResult& r = results[resultIndex];
 				const float value = useAliasDb ? r.aliasSuppressionDb : r.generationMs;
 				const float norm = maxValue > 0.0f ? std::max(0.0f, value / maxValue) : 0.0f;
 				const float barH = rc.height * norm;
 				const float x = rc.x + cellW * ((float)i + 0.5f) - barW * 0.5f;
 				const float y = rc.y + rc.height - barH;
-				const Color c = bars[i % (int)(sizeof(bars) / sizeof(bars[0]))];
+				const Color c = resultColors[resultIndex % (int)resultColors.size()];
 
 				DrawRectangleRec(Rectangle{ x, y, barW, barH }, c);
 				DrawRectangleLinesEx(Rectangle{ x, y, barW, barH }, 1.0f, Fade(RAYWHITE, 0.6f));
@@ -806,11 +812,11 @@ int main2()
 				char valueText[64];
 				if (useAliasDb) sprintf(valueText, "%.2f dB", value);
 				else sprintf(valueText, "%.3f ms", value);
-				Vector2 valueSize = MeasureLabel(valueText, 15.0f);
-				DrawLabel(valueText, x + barW * 0.5f - valueSize.x * 0.5f, y - 22.0f, 15.0f, text);
+				Vector2 valueSize = MeasureLabel(valueText, 20.0f);
+				DrawLabel(valueText, x + barW * 0.5f - valueSize.x * 0.5f, y - 29.0f, 20.0f, text);
 
-				Vector2 nameSize = MeasureLabel(r.name, 16.0f);
-				DrawLabel(r.name, x + barW * 0.5f - nameSize.x * 0.5f, rc.y + rc.height + 10.0f, 16.0f, muted);
+				Vector2 nameSize = MeasureLabel(r.name, 22.0f);
+				DrawLabel(r.name, x + barW * 0.5f - nameSize.x * 0.5f, rc.y + rc.height + 12.0f, 22.0f, muted);
 			}
 		};
 
@@ -819,18 +825,18 @@ int main2()
 		BeginDrawing();
 		ClearBackground(bg);
 
-		DrawLabel("BLEP Benchmark", 70.0f, 28.0f, 30.0f, text);
+		DrawLabel("BLEP Benchmark", 70.0f, 24.0f, 40.0f, text);
 		char subtitle[256];
 		sprintf(subtitle, "%.0f Hz saw, %d samples, %.0f Hz sample rate", EvalFreqHz, EvalSamples, EvalSampleRate);
-		DrawLabel(subtitle, 70.0f, 66.0f, 17.0f, muted);
+		DrawLabel(subtitle, 70.0f, 72.0f, 23.0f, muted);
 
-		DrawBarChart(Rectangle{ 150.0f, 145.0f, 1260.0f, 280.0f },
-			"Alias suppression, higher is better", "dB", true);
-		DrawBarChart(Rectangle{ 150.0f, 560.0f, 1260.0f, 220.0f },
-			"Generation time , lower is better", "ms", false);
+		DrawBarChart(Rectangle{ 170.0f, 165.0f, 1240.0f, 280.0f },
+			"Alias suppression, higher is better", "dB", true, aliasOrder);
+		DrawBarChart(Rectangle{ 170.0f, 585.0f, 1240.0f, 220.0f },
+			"Generation time, lower is better", "ms", false, timeOrder);
 
 		DrawLabel("Metric: Hann-windowed FFT magnitude error vs ideal integrated-Dirac bandlimited saw; phase is discarded, DC/Nyquist bins ignored.",
-			70.0f, 840.0f, 15.0f, muted);
+			70.0f, 852.0f, 19.0f, muted);
 
 		EndDrawing();
 	}
@@ -845,6 +851,6 @@ int main2()
 
 int main()
 {
-	//main1<IIRBlep2::IIRBlep>();
-	return main2();
+	//main1<TableBlep>();
+	main2();
 }

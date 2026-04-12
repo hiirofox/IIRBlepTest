@@ -17,10 +17,10 @@ function result = design_elliptic_modal_normalized(n, fc_hz, Rp, Rs, fs, dc_bloc
 %   - If dc_block_rad is a vector, its length must match dc_block_order (or, if
 %     dc_block_order is omitted, the vector length becomes the order).
 
-    if nargin < 1 || isempty(n),              n = 12; end
+    if nargin < 1 || isempty(n),              n = 6; end
     if nargin < 2 || isempty(fc_hz),          fc_hz = 23000; end
-    if nargin < 3 || isempty(Rp),             Rp = 1; end
-    if nargin < 4 || isempty(Rs),             Rs = 140; end
+    if nargin < 3 || isempty(Rp),             Rp = 100; end
+    if nargin < 4 || isempty(Rs),             Rs = 1400; end
     if nargin < 5 || isempty(fs),             fs = 48000; end
     if nargin < 6 || isempty(dc_block_rad),   dc_block_rad = 100.0; end
     if nargin < 7 || isempty(dc_block_order),  dc_block_order = 0; end

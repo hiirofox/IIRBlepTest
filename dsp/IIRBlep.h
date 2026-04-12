@@ -324,3 +324,144 @@ namespace IIRBlep2
 	};
 
 }
+
+namespace HybridBlep
+{
+	namespace HybridBlepFirCoeffs
+	{
+		constexpr static int FirSize = 16;
+		const float firCoeffs[FirSize] = { 1.0, 0, };
+	}
+
+	class HybridBlep
+	{
+	private:
+		IIRBlep2::TwoPoleModal twoPoles[IIRBlepCoeffs::NumTwoPoles];
+		IIRBlep2::OnePoleModal onePoles[IIRBlepCoeffs::NumOnePoles];
+		float v = 0.0f;
+		float twoPoleG1States[IIRBlepCoeffs::NumTwoPoles][HybridBlepFirCoeffs::FirSize] = { 0 };
+		float twoPoleG2States[IIRBlepCoeffs::NumTwoPoles][HybridBlepFirCoeffs::FirSize] = { 0 };
+		float onePoleG1States[IIRBlepCoeffs::NumOnePoles][HybridBlepFirCoeffs::FirSize] = { 0 };
+		int firpos = 0;
+	public:
+		HybridBlep()
+		{
+			for (int i = 0; i < IIRBlepCoeffs::NumTwoPoles; ++i) {
+				const float pre = IIRBlepCoeffs::twoPoleParams[i * 2 + 0];
+				const float pim = IIRBlepCoeffs::twoPoleParams[i * 2 + 1];
+				twoPoles[i].CalcPole(pre, pim);
+			}
+
+			for (int i = 0; i < IIRBlepCoeffs::NumOnePoles; ++i) {
+				onePoles[i].CalcPole(IIRBlepCoeffs::onePoleParams[i]);
+			}
+
+			IIRBlepUtils::BuildTables();
+			Reset();
+		}
+
+		void Add(float linear_gain, float tau, int mode = 1)
+		{
+			if (mode < IIRBlepUtils::BLIT_MODE || mode > IIRBlepUtils::BLAMP_MODE) return;
+
+			if (tau < 0.0f) tau = 0.0f;
+			if (tau >= 1.0f) tau = 0.999999999999f;
+
+			const float fpos = tau * (float)(IIRBlepUtils::TableSize - 1);
+			const int index1 = (int)fpos;
+			const int index2 = index1 + 1;
+			const float frac = fpos - (float)index1;
+
+			const float(*twoPoleG1Table)[IIRBlepUtils::TableSize] = IIRBlepUtils::twoPoleBlitG1Table;
+			const float(*twoPoleG2Table)[IIRBlepUtils::TableSize] = IIRBlepUtils::twoPoleBlitG2Table;
+			const float(*onePoleG1Table)[IIRBlepUtils::TableSize] = IIRBlepUtils::onePoleBlitG1Table;
+
+			if (mode == IIRBlepUtils::BLEP_MODE) {
+				twoPoleG1Table = IIRBlepUtils::twoPoleBlepG1Table;
+				twoPoleG2Table = IIRBlepUtils::twoPoleBlepG2Table;
+				onePoleG1Table = IIRBlepUtils::onePoleBlepG1Table;
+			}
+			else if (mode == IIRBlepUtils::BLAMP_MODE) {
+				twoPoleG1Table = IIRBlepUtils::twoPoleBlampG1Table;
+				twoPoleG2Table = IIRBlepUtils::twoPoleBlampG2Table;
+				onePoleG1Table = IIRBlepUtils::onePoleBlampG1Table;
+			}
+
+			for (int i = 0; i < IIRBlepCoeffs::NumTwoPoles; ++i) {
+				const float g1 = IIRBlepUtils::LerpTable(twoPoleG1Table[i], index1, index2, frac) * linear_gain;
+				const float g2 = IIRBlepUtils::LerpTable(twoPoleG2Table[i], index1, index2, frac) * linear_gain;
+				//twoPoles[i].InjectEvent(g1, g2);
+				for (int j = 0; j < HybridBlepFirCoeffs::FirSize; ++j) {
+					int index = (firpos + j) % HybridBlepFirCoeffs::FirSize;
+					twoPoleG1States[i][index] += g1 * HybridBlepFirCoeffs::firCoeffs[j];
+					twoPoleG2States[i][index] += g2 * HybridBlepFirCoeffs::firCoeffs[j];
+				}
+			}
+
+			for (int i = 0; i < IIRBlepCoeffs::NumOnePoles; ++i) {
+				const float g1 = IIRBlepUtils::LerpTable(onePoleG1Table[i], index1, index2, frac) * linear_gain;
+				//onePoles[i].InjectEvent(g1);
+				for (int j = 0; j < HybridBlepFirCoeffs::FirSize; ++j) {
+					int index = (firpos + j) % HybridBlepFirCoeffs::FirSize;
+					onePoleG1States[i][index] += g1 * HybridBlepFirCoeffs::firCoeffs[j];
+				}
+			}
+		}
+
+		void Step()
+		{
+			for (int i = 0; i < IIRBlepCoeffs::NumTwoPoles; ++i) {//inject fir state
+				float g1 = twoPoleG1States[i][firpos];
+				float g2 = twoPoleG2States[i][firpos];
+				twoPoles[i].InjectEvent(g1, g2);
+				twoPoleG1States[i][firpos] = 0.0f;
+				twoPoleG2States[i][firpos] = 0.0f;
+			}
+			for (int i = 0; i < IIRBlepCoeffs::NumOnePoles; ++i) {
+				float g1 = onePoleG1States[i][firpos];
+				onePoles[i].InjectEvent(g1);
+				onePoleG1States[i][firpos] = 0.0f;
+			}
+			firpos++;
+			if (firpos >= HybridBlepFirCoeffs::FirSize) firpos = 0;
+
+			float y = 0.0f;
+			for (int i = 0; i < IIRBlepCoeffs::NumTwoPoles; ++i) {
+				y += twoPoles[i].ProcessSample();
+			}
+			for (int i = 0; i < IIRBlepCoeffs::NumOnePoles; ++i) {
+				y += onePoles[i].ProcessSample();
+			}
+			v = y;
+		}
+
+		float Get()
+		{
+			return v;
+		}
+
+		void Reset()
+		{
+			for (int i = 0; i < IIRBlepCoeffs::NumTwoPoles; ++i) {
+				twoPoles[i].Reset();
+			}
+			for (int i = 0; i < IIRBlepCoeffs::NumOnePoles; ++i) {
+				onePoles[i].Reset();
+			}
+			v = 0.0f;
+
+			for (int i = 0; i < IIRBlepCoeffs::NumTwoPoles; ++i) {
+				for (int j = 0; j < HybridBlepFirCoeffs::FirSize; ++j) {
+					twoPoleG1States[i][j] = 0.0f;
+					twoPoleG2States[i][j] = 0.0f;
+				}
+			}
+			for (int i = 0; i < IIRBlepCoeffs::NumOnePoles; ++i) {
+				for (int j = 0; j < HybridBlepFirCoeffs::FirSize; ++j) {
+					onePoleG1States[i][j] = 0.0f;
+				}
+			}
+		}
+	};
+
+}
