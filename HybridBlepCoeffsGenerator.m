@@ -13,9 +13,9 @@ function result = HybridBlepCoeffsGenerator()
 % dsp/IIRBlep.h.
 
     % ---------------- User-facing design parameters ----------------
-    modal_order = 5;
+    modal_order = 8;
     target_order = 24;
-    fc_hz = 6000;
+    fc_hz = 23500;
     fc_target_hz = 23500;
     Rp = 0.1;
     modal_Rs = 97.5;
@@ -28,6 +28,7 @@ function result = HybridBlepCoeffsGenerator()
     fir_table_size = 24;
     fir_design_mode = 'time-error'; % TableBlep-style continuous 1D error, then polyphase slicing
     fir_signal_len = 65536;
+    fir_window_ridge = 1e-4;
     fir_taper = 'right-square-welch'; % 'none', 'right-square-welch', or 'tableblep'
     fir_dc_window = 'square-welch'; % 'square-welch', 'blackman-harris', or 'flat'
 
@@ -51,6 +52,7 @@ function result = HybridBlepCoeffsGenerator()
     cfg.fir_table_size = fir_table_size;
     cfg.fir_design_mode = fir_design_mode;
     cfg.fir_signal_len = fir_signal_len;
+    cfg.fir_window_ridge = fir_window_ridge;
     cfg.fir_taper = fir_taper;
     cfg.fir_dc_window = fir_dc_window;
     cfg.response_samples = response_samples;
@@ -122,6 +124,7 @@ function result = HybridBlepCoeffsGenerator()
     fprintf('\n');
     fprintf('Pole consistency error    = BLEP %.12g, BLAMP %.12g rad/s\n', pole_error_blep, pole_error_blamp);
     fprintf('FIR design                = %s, size %d, table %d, signal %d\n', fir_design_mode, fir_size, fir_table_size, fir_signal_len);
+    fprintf('FIR window ridge          = %.12g\n', fir_window_ridge);
     fprintf('FIR one-sided taper       = %s\n', fir_taper);
     fprintf('FIR DC window             = %s\n', fir_dc_window);
     fprintf('Two-pole modal count      = %d\n', numel(models(1).p_two));
@@ -171,6 +174,7 @@ function validate_config(cfg)
     validateattributes(cfg.fir_size,         {'numeric'}, {'scalar','integer','positive'});
     validateattributes(cfg.fir_table_size,   {'numeric'}, {'scalar','integer','>=', 3});
     validateattributes(cfg.fir_signal_len,   {'numeric'}, {'scalar','integer','positive'});
+    validateattributes(cfg.fir_window_ridge, {'numeric'}, {'scalar','nonnegative'});
     validateattributes(cfg.response_samples, {'numeric'}, {'scalar','integer','positive'});
 end
 
@@ -230,8 +234,40 @@ function signal = design_continuous_fir_signal(base_model, target_model, Ts, cfg
             error('Unknown fir_design_mode "%s". Use "time-error" for the TableBlep-style continuous polyphase table.', cfg.fir_design_mode);
     end
 
-    signal = signal .* fir_taper_window(numel(signal), cfg.fir_taper);
-    signal = apply_fir_dc_compensation(signal, 0.0, cfg.fir_dc_window);
+    taper = fir_taper_window(numel(signal), cfg.fir_taper);
+    dc_window = dc_compensation_window(numel(signal), cfg.fir_dc_window);
+    signal = optimize_windowed_fir_signal(signal, taper, dc_window, 0.0, cfg.fir_window_ridge);
+end
+
+function signal = optimize_windowed_fir_signal(desired, taper, dc_window, desired_sum, ridge)
+    desired = real(desired(:)).';
+    taper = real(taper(:)).';
+    dc_window = real(dc_window(:)).';
+
+    if numel(taper) ~= numel(desired) || numel(dc_window) ~= numel(desired)
+        error('FIR taper, DC window, and desired signal lengths must match.');
+    end
+
+    taper_power = taper .* taper;
+    if ridge <= 0
+        signal = desired;
+        signal(abs(taper) < 1e-12) = 0.0;
+        signal = apply_fir_dc_compensation_with_window(signal, desired_sum, dc_window .* (abs(taper) >= 1e-12));
+        return;
+    end
+
+    fit = taper_power ./ (taper_power + ridge);
+    correction_shape = fit .* dc_window;
+    correction_sum = sum(correction_shape);
+
+    if abs(correction_sum) < 1e-12
+        signal = fit .* desired;
+        signal = apply_fir_dc_compensation_with_window(signal, desired_sum, correction_shape);
+        return;
+    end
+
+    beta = (desired_sum - sum(fit .* desired)) / correction_sum;
+    signal = fit .* desired + beta * correction_shape;
 end
 
 function table = slice_continuous_fir_signal(signal, fir_size, table_size)
@@ -285,6 +321,12 @@ end
 function c = apply_fir_dc_compensation(c, desired_sum, window_name)
     c = real(c(:)).';
     w = dc_compensation_window(numel(c), window_name);
+    c = apply_fir_dc_compensation_with_window(c, desired_sum, w);
+end
+
+function c = apply_fir_dc_compensation_with_window(c, desired_sum, w)
+    c = real(c(:)).';
+    w = real(w(:)).';
     window_sum = sum(w);
     if abs(window_sum) < 1e-12
         w = ones(size(c));
@@ -498,15 +540,16 @@ function plot_hybrid_residuals(models, target_models, fir_tables, fs, cfg)
 end
 
 function plot_flattened_fir_table(fir_table, table_size, fir_size)
+    phase_count = table_size - 1;
     valid_rows = table_size;
-    phase_axis = 0:valid_rows-1;
+    phase_axis = 0:phase_count;
     hold on;
 
     x_all = zeros(1, valid_rows * fir_size);
     y_all = zeros(1, valid_rows * fir_size);
     for tap = 0:fir_size-1
         idx = tap * valid_rows + (1:valid_rows);
-        k = tap * valid_rows + phase_axis;
+        k = tap * phase_count + phase_axis;
         x_all(idx) = k / table_size;
         y_all(idx) = fir_table(1:valid_rows, tap + 1).';
     end
