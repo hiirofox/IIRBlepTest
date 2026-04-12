@@ -694,14 +694,15 @@ int main2()
 {
 	constexpr int ScreenW = 1500;
 	constexpr int ScreenH = 900;
-	constexpr float EvalFreqHz = 5000.0f;
+	constexpr float EvalFreqHz = 20000.0f;
 	constexpr int EvalSamples = 131072*16;
 
 	std::vector<BlepEvalResult> results;
-	results.push_back(Eval<IIRBlep2::IIRBlep>(EvalFreqHz, EvalSamples, "IIRModal"));
-	results.push_back(Eval<TableBlep>(EvalFreqHz, EvalSamples, "Table"));
-	results.push_back(Eval<Lagrange2thBlep>(EvalFreqHz, EvalSamples, "Lag2"));
-	results.push_back(Eval<Lagrange4thBlep>(EvalFreqHz, EvalSamples, "Lag4"));
+	results.push_back(Eval<IIRBlep2::IIRBlep>(EvalFreqHz, EvalSamples, "IIRBlep"));
+	results.push_back(Eval<HybridBlep::HybridBlep>(EvalFreqHz, EvalSamples, "HybridBlep"));
+	results.push_back(Eval<TableBlep>(EvalFreqHz, EvalSamples, "TableBlep"));
+	results.push_back(Eval<Lagrange2thBlep>(EvalFreqHz, EvalSamples, "Lagrange2"));
+	results.push_back(Eval<Lagrange4thBlep>(EvalFreqHz, EvalSamples, "Lagrange4"));
 	results.push_back(Eval<Bspline6thBlep>(EvalFreqHz, EvalSamples, "Bspline6"));
 
 	for (const BlepEvalResult& r : results)
@@ -851,6 +852,6 @@ int main2()
 
 int main()
 {
-	//main1<TableBlep>();
-	main2();
+	main1<HybridBlep::HybridBlep>();
+	//main2();
 }
